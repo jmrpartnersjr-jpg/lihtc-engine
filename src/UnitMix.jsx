@@ -146,37 +146,44 @@ function AmiDistBar({ rows }) {
 }
 
 // ─── MAX RENT REFERENCE TABLE ─────────────────────────────────────────────────
+// Shows gross HUD max allowable rents only — no UA deduction.
+// UA is handled in the unit mix table itself, not here.
 function MaxRentTable({ amiGrid, metroName, fiscalYear }) {
-  const brs = [0, 1, 2, 3];
-  const amis = [50, 60, 70, 80];
-  const uaByBr = { 0: 70, 1: 90, 2: 110, 3: 130 };
+  const brs  = [0, 1, 2, 3, 4];
+  const amis = [30, 40, 50, 60, 65, 70, 75, 80, 90, 100, "fmr"];
+  const brLabel = br => br === 0 ? "Studio" : `${br} BD`;
+  const amiLabel = a => a === "fmr" ? "FMR" : `${a}%`;
   return (
-    <div style={{ background: "white", border: "1px solid #e0e0e0", borderRadius: 6, padding: "14px 18px" }}>
+    <div style={{ background: "white", border: "1px solid #e0e0e0", borderRadius: 6, padding: "14px 18px", overflowX: "auto" }}>
       <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: "#888", marginBottom: 4 }}>
-        Max Rent Reference
+        Max Allowable Rent Reference
       </div>
       <div style={{ fontSize: 8, color: "#aaa", marginBottom: 10 }}>
-        {metroName} · FY{fiscalYear} MTSP · Source: HUD · Max Rent = Max Allowable − UA
+        {metroName} · FY{fiscalYear} MTSP · Source: HUD · Gross rents before utility allowance deduction
       </div>
-      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 10, fontFamily: "Inter, sans-serif" }}>
+      <table style={{ borderCollapse: "collapse", fontSize: 10, fontFamily: "Inter, sans-serif", minWidth: "100%" }}>
         <thead>
           <tr style={{ borderBottom: "2px solid #111" }}>
-            <th style={{ padding: "5px 8px", textAlign: "left", fontSize: 8, color: "#888", textTransform: "uppercase" }}>Unit Type</th>
+            <th style={{ padding: "5px 10px", textAlign: "left", fontSize: 8, color: "#888", textTransform: "uppercase", whiteSpace: "nowrap" }}>Beds</th>
             {amis.map(a => (
-              <th key={a} style={{ padding: "5px 8px", textAlign: "right", fontSize: 8, color: "#888", textTransform: "uppercase" }}>{a}% AMI</th>
+              <th key={a} style={{ padding: "5px 10px", textAlign: "right", fontSize: 8, color: a === "fmr" ? "#1a3a6b" : "#888", textTransform: "uppercase", whiteSpace: "nowrap", fontWeight: a === "fmr" ? 700 : 700 }}>
+                {amiLabel(a)}
+              </th>
             ))}
           </tr>
         </thead>
         <tbody>
           {brs.map(br => (
             <tr key={br} style={{ borderBottom: "1px solid #f5f5f5" }}>
-              <td style={{ padding: "5px 8px", color: "#444" }}>{br === 0 ? "Studio" : `${br} BD`}</td>
-              {amis.map(a => (
-                <td key={a} style={{ padding: "5px 8px", textAlign: "right", fontWeight: 500 }}>
-                  {fmt$(calcMaxAllowable(amiGrid, a, br))}
-                  <span style={{ fontSize: 8, color: "#ccc", marginLeft: 3 }}>−{fmt$(uaByBr[br])}</span>
-                </td>
-              ))}
+              <td style={{ padding: "5px 10px", color: "#444", fontWeight: 600, whiteSpace: "nowrap" }}>{brLabel(br)}</td>
+              {amis.map(a => {
+                const val = calcMaxAllowable(amiGrid, a === "fmr" ? "fmr" : a, br);
+                return (
+                  <td key={a} style={{ padding: "5px 10px", textAlign: "right", fontWeight: 500, color: a === "fmr" ? "#1a3a6b" : "#111", whiteSpace: "nowrap" }}>
+                    {val ? fmt$(val) : "—"}
+                  </td>
+                );
+              })}
             </tr>
           ))}
         </tbody>
@@ -189,10 +196,11 @@ function MaxRentTable({ amiGrid, metroName, fiscalYear }) {
 export default function UnitMixPanel({ onRevenueChange }) {
   const { moduleStates, updateModule } = useLihtc();
 
-  // Rows + metro/year — all versioned via context
-  const rows          = moduleStates.unit_mix?.rows       ?? DEFAULT_UNIT_MIX;
-  const selectedMetro = moduleStates.unit_mix?.metro_name ?? DEFAULT_METRO;
+  // Rows + metro/year + UA notes — all versioned via context
+  const rows          = moduleStates.unit_mix?.rows        ?? DEFAULT_UNIT_MIX;
+  const selectedMetro = moduleStates.unit_mix?.metro_name  ?? DEFAULT_METRO;
   const selectedYear  = moduleStates.unit_mix?.fiscal_year ?? DEFAULT_YEAR;
+  const uaNotes       = moduleStates.unit_mix?.ua_notes    ?? "";
 
   // AMI grid — reference data, fetched fresh, not versioned
   const [amiGrid,         setAmiGrid]         = useState(null);
@@ -247,7 +255,8 @@ export default function UnitMixPanel({ onRevenueChange }) {
 
   // Write metro/year selection to context (saved with version snapshots)
   const setMetro = (v) => updateModule("unit_mix", { metro_name: v });
-  const setYear  = (v) => updateModule("unit_mix", { fiscal_year: v });
+  const setYear    = (v) => updateModule("unit_mix", { fiscal_year: v });
+  const setUaNotes = (v) => updateModule("unit_mix", { ua_notes: v });
 
   // Row operations
   const updateRow = useCallback((id, field, value) => {
@@ -345,6 +354,26 @@ export default function UnitMixPanel({ onRevenueChange }) {
       {showRef && !amiLoading && amiGrid && (
         <div style={{ marginBottom:16 }}>
           <MaxRentTable amiGrid={amiGrid} metroName={selectedMetro} fiscalYear={selectedYear} />
+          {/* UA Notes — versioned, explains what UA schedule was used and why */}
+          <div style={{ marginTop:10, background:"white", border:"1px solid #e0e0e0", borderRadius:6, padding:"12px 16px" }}>
+            <div style={{ fontSize:8, fontWeight:700, letterSpacing:"0.1em", textTransform:"uppercase", color:"#888", marginBottom:6 }}>
+              Utility Allowance Notes
+            </div>
+            <div style={{ fontSize:8, color:"#aaa", marginBottom:8 }}>
+              Document which UA schedule was used and why. Default is PHA published schedule. New construction typically uses modeled UA from energy analysis (always lower than PHA).
+            </div>
+            <textarea
+              value={uaNotes}
+              onChange={e => setUaNotes(e.target.value)}
+              placeholder="e.g. Modeled UA per energy analysis by [firm], dated [date]. Studio: $17, 1BR: $20, 2BR: $24, 3BR: $35. Lower than PHA schedule — using modeled values per WSHFC guidance."
+              rows={3}
+              style={{
+                width:"100%", background:"#fafafa", border:"1px solid #e8e8e8", borderRadius:4,
+                padding:"8px 10px", fontSize:10, fontFamily:"Inter, sans-serif", color:"#333",
+                resize:"vertical", outline:"none", boxSizing:"border-box", lineHeight:1.5,
+              }}
+            />
+          </div>
         </div>
       )}
 
