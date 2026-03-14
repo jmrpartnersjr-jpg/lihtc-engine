@@ -1,4 +1,5 @@
 import { useState, useCallback } from "react";
+import { useLihtc } from "./context/LihtcContext.jsx";   // ← ADDED
 
 // ─────────────────────────────────────────────────────────────────────────────
 // UNIT MIX TAB — LIHTC Engine
@@ -6,15 +7,8 @@ import { useState, useCallback } from "react";
 // Feeds base_residential_rev back into the proforma engine.
 // ─────────────────────────────────────────────────────────────────────────────
 
-// HUD AMI % → rent fraction. Standard LIHTC rents are 30% of AMI income limit.
-// Income limit = AMI × person_factor; rent = income_limit / 12 * 0.30
-// We store utility allowance as a deduction per unit type.
-// Person count assumption per bedroom type (HUD convention):
 const PERSONS_BY_BR = { 0: 1, 1: 1.5, 2: 3, 3: 4.5, 4: 6 };
 
-// Rough HUD 2025 AMI for King County, WA (placeholder — user should update)
-// 1-person thru 8-person for 30%, 40%, 50%, 60%, 70%, 80%, 100% AMI
-// Source: HUD FY2025 Income Limits, Seattle-Bellevue HMFA
 const AMI_INCOME_LIMITS_KC_2025 = {
   30:  [29300, 33500, 37700, 41850, 45200, 48550, 51900, 55250],
   40:  [39050, 44650, 50200, 55750, 60250, 64700, 69150, 73600],
@@ -27,7 +21,6 @@ const AMI_INCOME_LIMITS_KC_2025 = {
 
 const AMI_LEVELS = [30, 40, 50, 60, 70, 80, 100];
 
-// Returns the HUD gross max allowable rent (BEFORE utility allowance deduction)
 export function calcMaxAllowable(ami_pct, bedrooms) {
   const limits = AMI_INCOME_LIMITS_KC_2025[ami_pct];
   if (!limits) return 0;
@@ -36,12 +29,11 @@ export function calcMaxAllowable(ami_pct, bedrooms) {
   return Math.round((incomeLimit * 0.30) / 12);
 }
 
-// Max Rent = Max Allowable - Utility Allowance (net rent to resident)
 export function calcMaxRent(ami_pct, bedrooms, utilityAllowance = 0) {
   return Math.max(0, calcMaxAllowable(ami_pct, bedrooms) - utilityAllowance);
 }
 
-// Default unit mix — Apollo SL structure (175 units, 4% bonds, mixed AMI)
+// Default unit mix — Apollo SL. Used as fallback if context has no rows yet.
 const DEFAULT_UNIT_MIX = [
   { id: 1, type: "Studio",     bedrooms: 0, count: 18,  ami_pct: 60, utility_allowance: 70,  rent_override: null, notes: "" },
   { id: 2, type: "1 BD/1 BA",  bedrooms: 1, count: 62,  ami_pct: 60, utility_allowance: 90,  rent_override: null, notes: "" },
@@ -218,7 +210,7 @@ function MaxRentTable() {
               {amis.map(a => (
                 <td key={a} style={{ padding: "5px 8px", textAlign: "right", fontWeight: 500 }}>
                   {fmt$(calcMaxAllowable(a, br))}
-                  <span style={{fontSize:8,color:"#ccc",marginLeft:3}}>-{fmt$(uaByBr[br])}</span>
+                  <span style={{ fontSize: 8, color: "#ccc", marginLeft: 3 }}>-{fmt$(uaByBr[br])}</span>
                 </td>
               ))}
             </tr>
@@ -231,12 +223,23 @@ function MaxRentTable() {
 
 // ─── MAIN UNIT MIX PANEL ──────────────────────────────────────────────────────
 export default function UnitMixPanel({ onRevenueChange }) {
-  const [rows, setRows] = useState(DEFAULT_UNIT_MIX.map(r => ({ ...r })));
+  // ── CHANGED: read rows from context instead of local useState ──────────────
+  const { moduleStates, updateModule } = useLihtc();
+  const rows = moduleStates.unit_mix?.rows ?? DEFAULT_UNIT_MIX;
+  // ── unchanged: showRef is pure UI state, never needs versioning ────────────
   const [showRef, setShowRef] = useState(false);
+
+  // ── CHANGED: helpers write back to context instead of setRows ──────────────
+  const setRows = useCallback((updater) => {
+    const currentRows = moduleStates.unit_mix?.rows ?? DEFAULT_UNIT_MIX;
+    const nextRows = typeof updater === "function" ? updater(currentRows) : updater;
+    updateModule("unit_mix", { rows: nextRows });
+  }, [moduleStates.unit_mix, updateModule]);
+  // ── Everything below this line is IDENTICAL to the original ────────────────
 
   const updateRow = useCallback((id, field, value) => {
     setRows(prev => prev.map(r => r.id === id ? { ...r, [field]: value } : r));
-  }, []);
+  }, [setRows]);
 
   const addRow = () => setRows(prev => [...prev, {
     id: mkRowId(), type: "New Unit", bedrooms: 1, count: 0,
@@ -254,10 +257,6 @@ export default function UnitMixPanel({ onRevenueChange }) {
     setRows(newRows);
   };
 
-  // Derived calculations
-  // maxAllowable = HUD gross rent (before UA)
-  // maxRent      = what you actually charge (override or maxAllowable - UA)
-  // moRevenue    = maxRent × count  (UA already baked into maxRent)
   const calcRow = (r) => {
     const maxAllowable = r.ami_pct === 0 ? 0 : calcMaxAllowable(r.ami_pct, r.bedrooms);
     const maxRent = r.rent_override != null
@@ -348,34 +347,27 @@ export default function UnitMixPanel({ onRevenueChange }) {
               const isOverride = r.rent_override != null;
               return (
                 <tr key={r.id} style={{ borderBottom: "1px solid #f5f5f5", background: idx % 2 === 0 ? "white" : "#fdfcfb" }}>
-                  {/* Type */}
                   <td style={{ padding: "4px 8px", textAlign: "left" }}>
                     <Cell value={r.type} onChange={v => updateRow(r.id, "type", v)} align="left"
                       style={{ fontWeight: 600, color: "#111" }} />
                   </td>
-                  {/* Bedrooms */}
                   <td style={{ padding: "4px 8px", textAlign: "right" }}>
                     <BdSelect value={r.bedrooms} onChange={v => updateRow(r.id, "bedrooms", v)} />
                   </td>
-                  {/* Count */}
                   <td style={{ padding: "4px 8px", textAlign: "right" }}>
                     <Cell value={r.count} onChange={v => updateRow(r.id, "count", v)} type="number"
                       style={{ fontWeight: 700, color: "#111", width: 50 }} />
                   </td>
-                  {/* AMI */}
                   <td style={{ padding: "4px 8px", textAlign: "right" }}>
                     <AmiSelect value={r.ami_pct} onChange={v => updateRow(r.id, "ami_pct", v)} />
                   </td>
-                  {/* Utility Allowance */}
                   <td style={{ padding: "4px 8px", textAlign: "right" }}>
                     <Cell value={r.utility_allowance} onChange={v => updateRow(r.id, "utility_allowance", v)} type="number"
                       style={{ color: "#666", width: 60 }} />
                   </td>
-                  {/* Max Allowable (HUD gross, read-only) */}
                   <td style={{ padding: "4px 14px", textAlign: "right" }}>
                     <span style={{ fontSize: 11, color: "#aaa" }}>{r.ami_pct === 0 ? "Market" : fmt$(maxAllowable)}</span>
                   </td>
-                  {/* Max Rent — editable, defaults to maxAllowable - UA */}
                   <td style={{ padding: "4px 8px", textAlign: "right" }}>
                     <div style={{ position: "relative" }}>
                       <Cell
@@ -389,26 +381,22 @@ export default function UnitMixPanel({ onRevenueChange }) {
                           width: 80
                         }}
                       />
-                      {isOverride && r.rent_override > (maxAllowable - (r.utility_allowance||0)) &&
+                      {isOverride && r.rent_override > (maxAllowable - (r.utility_allowance || 0)) &&
                         <span style={{ position: "absolute", right: -14, top: 4, fontSize: 9, color: "#8B2500" }} title="Above net max">↑</span>}
-                      {isOverride && r.rent_override < (maxAllowable - (r.utility_allowance||0)) &&
+                      {isOverride && r.rent_override < (maxAllowable - (r.utility_allowance || 0)) &&
                         <span style={{ position: "absolute", right: -14, top: 4, fontSize: 9, color: "#1a6b3c" }} title="Below net max (underwriter adj.)">↓</span>}
                     </div>
                   </td>
-                  {/* Monthly Revenue */}
                   <td style={{ padding: "4px 14px", textAlign: "right" }}>
                     <span style={{ fontSize: 11, fontWeight: 500 }}>{fmt$(monthlyRevenue)}</span>
                   </td>
-                  {/* Annual Revenue */}
                   <td style={{ padding: "4px 14px", textAlign: "right" }}>
                     <span style={{ fontSize: 11, fontWeight: 700, color: "#1a3a6b" }}>{fmt$(annualRevenue)}</span>
                   </td>
-                  {/* Notes */}
                   <td style={{ padding: "4px 8px" }}>
                     <Cell value={r.notes} onChange={v => updateRow(r.id, "notes", v)} align="left"
                       style={{ color: "#aaa", fontSize: 10 }} />
                   </td>
-                  {/* Actions */}
                   <td style={{ padding: "4px 6px", textAlign: "right", whiteSpace: "nowrap" }}>
                     <button onClick={() => duplicateRow(r.id)} title="Duplicate"
                       style={{ background: "none", border: "none", cursor: "pointer", color: "#bbb", fontSize: 11, padding: "2px 3px" }}>⎘</button>
@@ -419,7 +407,6 @@ export default function UnitMixPanel({ onRevenueChange }) {
               );
             })}
           </tbody>
-          {/* Totals row */}
           <tfoot>
             <tr style={{ borderTop: "2px solid #111", background: "#fafafa" }}>
               <td colSpan={2} style={{ padding: "8px 14px", fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: "#888" }}>TOTAL</td>
