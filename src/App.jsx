@@ -679,9 +679,9 @@ export default function App() {
   ];
 
   return (
-    <div style={{display:"flex",height:"100vh",fontFamily:"'DM Mono',monospace",background:"#f5f5f3",overflow:"hidden"}}>
+    <div style={{display:"flex",height:"100vh",fontFamily:"'Inter',sans-serif",background:"#f5f5f3",overflow:"hidden"}}>
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&family=Playfair+Display:wght@400;700&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Playfair+Display:wght@400;700&display=swap');
         *{box-sizing:border-box;margin:0;padding:0;}
         button:hover{opacity:0.75;}
         ::-webkit-scrollbar{width:4px;height:4px;}

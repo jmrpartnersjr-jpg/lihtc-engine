@@ -67,7 +67,7 @@ function Cell({ value, onChange, type = "text", width, align = "right", placehol
         borderBottom: "1px solid transparent",
         outline: "none",
         fontSize: 11,
-        fontFamily: "'DM Mono', monospace",
+        fontFamily: "'Inter',sans-serif",
         color: "#1a3a6b",
         textAlign: align,
         padding: "3px 6px",
@@ -90,7 +90,7 @@ function AmiSelect({ value, onChange }) {
         background: "transparent",
         border: "none",
         fontSize: 11,
-        fontFamily: "'DM Mono', monospace",
+        fontFamily: "'Inter',sans-serif",
         color: "#5a3a00",
         fontWeight: 700,
         cursor: "pointer",
@@ -118,7 +118,7 @@ function BdSelect({ value, onChange }) {
         background: "transparent",
         border: "none",
         fontSize: 11,
-        fontFamily: "'DM Mono', monospace",
+        fontFamily: "'Inter',sans-serif",
         color: "#111",
         cursor: "pointer",
         outline: "none",
@@ -194,7 +194,7 @@ function MaxRentTable() {
       <div style={{ fontSize: 8, color: "#aaa", marginBottom: 10 }}>
         Gross HUD rent (before utility allowance). Source: HUD FY2025 Seattle-Bellevue HMFA. Max Rent = Max Allowable − UA.
       </div>
-      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 10, fontFamily: "'DM Mono', monospace" }}>
+      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 10, fontFamily: "'Inter',sans-serif" }}>
         <thead>
           <tr style={{ borderBottom: "2px solid #111" }}>
             <th style={{ padding: "5px 8px", textAlign: "left", fontSize: 8, color: "#888", textTransform: "uppercase", letterSpacing: "0.06em" }}>Unit Type</th>
@@ -291,12 +291,12 @@ export default function UnitMixPanel({ onRevenueChange }) {
         <div style={{ display: "flex", gap: 8 }}>
           <button
             onClick={() => setShowRef(v => !v)}
-            style={{ background: "white", border: "1px solid #e0e0e0", color: "#666", padding: "5px 12px", borderRadius: 3, cursor: "pointer", fontSize: 9, letterSpacing: "0.08em", textTransform: "uppercase", fontFamily: "'DM Mono', monospace" }}>
+            style={{ background: "white", border: "1px solid #e0e0e0", color: "#666", padding: "5px 12px", borderRadius: 3, cursor: "pointer", fontSize: 9, letterSpacing: "0.08em", textTransform: "uppercase", fontFamily: "'Inter',sans-serif" }}>
             {showRef ? "Hide" : "AMI Ref"}
           </button>
           <button
             onClick={addRow}
-            style={{ background: "#1a3a6b", color: "white", border: "none", padding: "5px 12px", borderRadius: 3, cursor: "pointer", fontSize: 9, letterSpacing: "0.08em", textTransform: "uppercase", fontFamily: "'DM Mono', monospace", fontWeight: 700 }}>
+            style={{ background: "#1a3a6b", color: "white", border: "none", padding: "5px 12px", borderRadius: 3, cursor: "pointer", fontSize: 9, letterSpacing: "0.08em", textTransform: "uppercase", fontFamily: "'Inter',sans-serif", fontWeight: 700 }}>
             + Row
           </button>
         </div>
@@ -325,7 +325,7 @@ export default function UnitMixPanel({ onRevenueChange }) {
 
       {/* Main grid */}
       <div style={{ background: "white", border: "1px solid #e0e0e0", borderRadius: 6, overflowX: "auto" }}>
-        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11, fontFamily: "'DM Mono', monospace" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11, fontFamily: "'Inter',sans-serif" }}>
           <thead>
             <tr style={{ borderBottom: "2px solid #111", background: "#fafafa" }}>
               <TH w={COL_WIDTHS.type}  align="left">Unit Type</TH>
@@ -432,7 +432,7 @@ export default function UnitMixPanel({ onRevenueChange }) {
         {onRevenueChange && (
           <button
             onClick={() => onRevenueChange(totalAnnualRev)}
-            style={{ background: "#1a3a6b", color: "white", border: "none", padding: "9px 18px", borderRadius: 4, cursor: "pointer", fontSize: 10, letterSpacing: "0.08em", textTransform: "uppercase", fontFamily: "'DM Mono', monospace", fontWeight: 700 }}>
+            style={{ background: "#1a3a6b", color: "white", border: "none", padding: "9px 18px", borderRadius: 4, cursor: "pointer", fontSize: 10, letterSpacing: "0.08em", textTransform: "uppercase", fontFamily: "'Inter',sans-serif", fontWeight: 700 }}>
             Push to Proforma →
           </button>
         )}
