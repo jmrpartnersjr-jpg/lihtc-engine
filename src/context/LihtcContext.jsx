@@ -29,7 +29,7 @@
  */
 
 import { createContext, useContext, useReducer, useCallback, useRef, useEffect } from 'react'
-import { supabase } from '../lib/supabase'
+import { supabase } from '../supabase'
 
 // ─────────────────────────────────────────────────────────────
 // DEFAULT INPUT SHAPES
