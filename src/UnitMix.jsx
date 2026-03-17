@@ -620,18 +620,30 @@ export default function UnitMixPanel({ onRevenueChange }) {
                     <td style={{ padding:"4px 14px", textAlign:"right" }}>
                       <span style={{ fontSize:11, color:"#aaa" }}>{r.ami_pct === 0 ? "Market" : fmt$(maxAllowable)}</span>
                     </td>
-                    {/* Net Max Rent — editable override */}
+                    {/* Net Max Rent — editable override. Null = dynamic (HUD max - UA). */}
                     <td style={{ padding:"4px 8px", textAlign:"right" }}>
-                      <div style={{ position:"relative" }}>
-                        <Cell
-                          value={r.rent_override ?? ""}
-                          onChange={v => updateRow(r.id, "rent_override", v === "" ? null : Number(v))}
-                          type="number"
-                          placeholder={r.ami_pct === 0 ? "—" : fmt$(Math.max(0, netMax))}
-                          style={{ color: isOverride ? "#5a3a00" : "#111", fontWeight: isOverride ? 700 : 400, width:80 }}
-                        />
-                        {isOverride && r.rent_override > netMax && <span style={{ position:"absolute", right:-14, top:4, fontSize:9, color:"#8B2500" }} title="Above HUD net max">↑</span>}
-                        {isOverride && r.rent_override < netMax && <span style={{ position:"absolute", right:-14, top:4, fontSize:9, color:"#1a6b3c" }} title="Below HUD net max">↓</span>}
+                      <div style={{ display:"flex", alignItems:"center", justifyContent:"flex-end", gap:3 }}>
+                        <div style={{ position:"relative" }}>
+                          <Cell
+                            value={r.rent_override ?? ""}
+                            onChange={v => updateRow(r.id, "rent_override", v)}
+                            type="number"
+                            placeholder={r.ami_pct === 0 ? "—" : fmt$(Math.max(0, netMax))}
+                            style={{ color: isOverride ? "#5a3a00" : "#111", fontWeight: isOverride ? 700 : 400, width:80 }}
+                          />
+                          {isOverride && r.rent_override > netMax && <span style={{ position:"absolute", right:-14, top:4, fontSize:9, color:"#8B2500" }} title="Above HUD net max">↑</span>}
+                          {isOverride && r.rent_override < netMax && <span style={{ position:"absolute", right:-14, top:4, fontSize:9, color:"#1a6b3c" }} title="Below HUD net max">↓</span>}
+                        </div>
+                        {/* Reset button — only shown when override is active */}
+                        {isOverride && (
+                          <button
+                            onClick={() => updateRow(r.id, "rent_override", null)}
+                            title="Reset to dynamic (HUD max − UA)"
+                            style={{ background:"none", border:"none", cursor:"pointer", color:"#bbb", fontSize:11, padding:"1px 3px", lineHeight:1, flexShrink:0 }}
+                            onMouseEnter={e => e.target.style.color = "#8B2500"}
+                            onMouseLeave={e => e.target.style.color = "#bbb"}
+                          >↺</button>
+                        )}
                       </div>
                     </td>
                     {/* Monthly Revenue */}
