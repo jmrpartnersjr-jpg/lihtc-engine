@@ -46,69 +46,69 @@ const DEFAULT_ASSUMPTIONS = {
 
 const DEFAULT_SECTIONS = {
   acquisition: [
-    { id: 1,  label: "Land Purchase Price",     amount: 4400000,  in_basis: false, type: "input",   pct_value: null, notes: "",                    is_locked: true  },
-    { id: 2,  label: "Closing Costs",           amount: 88000,    in_basis: false, type: "input",   pct_value: null, notes: "2% of land",          is_locked: false },
-    { id: 3,  label: "Extension Fees",          amount: 0,        in_basis: false, type: "input",   pct_value: null, notes: "",                    is_locked: false },
+    { id: 1,  label: "Land Purchase Price",     amount: 4400000,  in_basis: false, bond_basis: true, type: "input",   pct_value: null, notes: "",                    is_locked: true  },
+    { id: 2,  label: "Closing Costs",           amount: 88000,    in_basis: false, bond_basis: false, type: "input",   pct_value: null, notes: "2% of land",          is_locked: false },
+    { id: 3,  label: "Extension Fees",          amount: 0,        in_basis: false, bond_basis: false, type: "input",   pct_value: null, notes: "",                    is_locked: false },
   ],
   hard_costs: [
-    { id: 10, label: "Residential Construction", amount: 31200000, in_basis: true,  type: "input",   pct_value: null, notes: "Per GC pricing",      is_locked: true  },
-    { id: 11, label: "Parking / Structured",     amount: 1500000,  in_basis: false, type: "input",   pct_value: null, notes: "Not in basis per WSHFC", is_locked: false },
-    { id: 12, label: "FF&E / GC Exclusions",     amount: 300000,   in_basis: true,  type: "input",   pct_value: null, notes: "",                    is_locked: false },
-    { id: 13, label: "Demolition",               amount: 50000,    in_basis: true,  type: "input",   pct_value: null, notes: "Estimate, GC feedback needed", is_locked: false },
-    { id: 14, label: "Site Work / Infrastructure", amount: 0,      in_basis: true,  type: "input",   pct_value: null, notes: "",                    is_locked: false },
-    { id: 15, label: "P&P Bond Premium",         amount: 300000,   in_basis: true,  type: "input",   pct_value: null, notes: "",                    is_locked: false },
-    { id: 16, label: "Contingency",              amount: null,     in_basis: true,  type: "pct_hc",  pct_value: null, notes: "% of HC subtotal",    is_locked: true  },
-    { id: 17, label: "Sales Tax",                amount: null,     in_basis: true,  type: "pct_hc",  pct_value: null, notes: "% of HC subtotal",    is_locked: true  },
+    { id: 10, label: "Residential Construction", amount: 31200000, in_basis: true, bond_basis: true,  type: "input",   pct_value: null, notes: "Per GC pricing",      is_locked: true  },
+    { id: 11, label: "Parking / Structured",     amount: 1500000,  in_basis: false, bond_basis: true, type: "input",   pct_value: null, notes: "Not in basis per WSHFC", is_locked: false },
+    { id: 12, label: "FF&E / GC Exclusions",     amount: 300000,   in_basis: true, bond_basis: true,  type: "input",   pct_value: null, notes: "",                    is_locked: false },
+    { id: 13, label: "Demolition",               amount: 50000,    in_basis: true, bond_basis: true,  type: "input",   pct_value: null, notes: "Estimate, GC feedback needed", is_locked: false },
+    { id: 14, label: "Site Work / Infrastructure", amount: 0,      in_basis: true, bond_basis: true,  type: "input",   pct_value: null, notes: "",                    is_locked: false },
+    { id: 15, label: "P&P Bond Premium",         amount: 300000,   in_basis: true, bond_basis: true,  type: "input",   pct_value: null, notes: "",                    is_locked: false },
+    { id: 16, label: "Contingency",              amount: null,     in_basis: true, bond_basis: true,  type: "pct_hc",  pct_value: null, notes: "% of HC subtotal",    is_locked: true  },
+    { id: 17, label: "Sales Tax",                amount: null,     in_basis: true, bond_basis: true,  type: "pct_hc",  pct_value: null, notes: "% of HC subtotal",    is_locked: true  },
   ],
   soft_costs: [
-    { id: 30, label: "Architecture & Design",    amount: 1175000,  in_basis: true,  type: "input",   pct_value: null, notes: "",                    is_locked: false },
-    { id: 31, label: "Engineering",              amount: 600000,   in_basis: true,  type: "input",   pct_value: null, notes: "Civil, MEP, Structural, Landscape", is_locked: false },
-    { id: 32, label: "Permits, Fees & Hook-Ups", amount: 1011715,  in_basis: true,  type: "input",   pct_value: null, notes: "",                    is_locked: false },
-    { id: 33, label: "Impact & Mitigation Fees", amount: 1300000,  in_basis: true,  type: "input",   pct_value: null, notes: "",                    is_locked: false },
-    { id: 34, label: "Environmental / Geotech",  amount: 35000,    in_basis: true,  type: "input",   pct_value: null, notes: "",                    is_locked: false },
-    { id: 35, label: "Survey, Topo & Boundary",  amount: 12000,    in_basis: true,  type: "input",   pct_value: null, notes: "",                    is_locked: false },
-    { id: 36, label: "Legal — Real Estate",      amount: 50000,    in_basis: true,  type: "input",   pct_value: null, notes: "",                    is_locked: false },
-    { id: 37, label: "Market Study",             amount: 4500,     in_basis: true,  type: "input",   pct_value: null, notes: "",                    is_locked: false },
-    { id: 38, label: "Appraisal",                amount: 5000,     in_basis: true,  type: "input",   pct_value: null, notes: "",                    is_locked: false },
-    { id: 39, label: "Other Consultants",        amount: 277500,   in_basis: true,  type: "input",   pct_value: null, notes: "Energy modeler, Green, ADA, Architect of Record", is_locked: false },
-    { id: 40, label: "Project Management",       amount: 300000,   in_basis: true,  type: "input",   pct_value: null, notes: "R/P",                  is_locked: false },
-    { id: 41, label: "Construction Management",  amount: 169365,   in_basis: true,  type: "input",   pct_value: null, notes: "",                    is_locked: false },
-    { id: 42, label: "Title & Recording",        amount: 100000,   in_basis: true,  type: "input",   pct_value: null, notes: "",                    is_locked: false },
-    { id: 43, label: "Other Inspections & Testing", amount: 100000, in_basis: true, type: "input",   pct_value: null, notes: "",                    is_locked: false },
-    { id: 44, label: "Soft Cost Contingency",    amount: null,     in_basis: true,  type: "pct_sc",  pct_value: null, notes: "% of SC subtotal",    is_locked: true  },
+    { id: 30, label: "Architecture & Design",    amount: 1175000,  in_basis: true, bond_basis: true,  type: "input",   pct_value: null, notes: "",                    is_locked: false },
+    { id: 31, label: "Engineering",              amount: 600000,   in_basis: true, bond_basis: true,  type: "input",   pct_value: null, notes: "Civil, MEP, Structural, Landscape", is_locked: false },
+    { id: 32, label: "Permits, Fees & Hook-Ups", amount: 1011715,  in_basis: true, bond_basis: true,  type: "input",   pct_value: null, notes: "",                    is_locked: false },
+    { id: 33, label: "Impact & Mitigation Fees", amount: 1300000,  in_basis: true, bond_basis: true,  type: "input",   pct_value: null, notes: "",                    is_locked: false },
+    { id: 34, label: "Environmental / Geotech",  amount: 35000,    in_basis: true, bond_basis: true,  type: "input",   pct_value: null, notes: "",                    is_locked: false },
+    { id: 35, label: "Survey, Topo & Boundary",  amount: 12000,    in_basis: true, bond_basis: true,  type: "input",   pct_value: null, notes: "",                    is_locked: false },
+    { id: 36, label: "Legal — Real Estate",      amount: 50000,    in_basis: true, bond_basis: true,  type: "input",   pct_value: null, notes: "",                    is_locked: false },
+    { id: 37, label: "Market Study",             amount: 4500,     in_basis: true, bond_basis: true,  type: "input",   pct_value: null, notes: "",                    is_locked: false },
+    { id: 38, label: "Appraisal",                amount: 5000,     in_basis: true, bond_basis: true,  type: "input",   pct_value: null, notes: "",                    is_locked: false },
+    { id: 39, label: "Other Consultants",        amount: 277500,   in_basis: true, bond_basis: true,  type: "input",   pct_value: null, notes: "Energy modeler, Green, ADA, Architect of Record", is_locked: false },
+    { id: 40, label: "Project Management",       amount: 300000,   in_basis: true, bond_basis: true,  type: "input",   pct_value: null, notes: "R/P",                  is_locked: false },
+    { id: 41, label: "Construction Management",  amount: 169365,   in_basis: true, bond_basis: true,  type: "input",   pct_value: null, notes: "",                    is_locked: false },
+    { id: 42, label: "Title & Recording",        amount: 100000,   in_basis: true, bond_basis: true,  type: "input",   pct_value: null, notes: "",                    is_locked: false },
+    { id: 43, label: "Other Inspections & Testing", amount: 100000, in_basis: true, bond_basis: true, type: "input",   pct_value: null, notes: "",                    is_locked: false },
+    { id: 44, label: "Soft Cost Contingency",    amount: null,     in_basis: true, bond_basis: true,  type: "pct_sc",  pct_value: null, notes: "% of SC subtotal",    is_locked: true  },
   ],
   financing: [
-    { id: 60, label: "Construction Origination & Fees", amount: null, in_basis: true,  type: "pct_loan_const", pct_value: null, notes: "% of construction loan", is_locked: true  },
-    { id: 61, label: "Perm Loan Origination",           amount: null, in_basis: false, type: "pct_loan_perm",  pct_value: null, notes: "% of perm loan",         is_locked: true  },
-    { id: 62, label: "Construction Interest",           amount: null, in_basis: true,  type: "est_2b",         pct_value: null, notes: "Estimated — Module 2B will calculate", is_locked: true  },
-    { id: 63, label: "Lease-Up Interest",               amount: null, in_basis: false, type: "est_2b",         pct_value: null, notes: "Estimated — Module 2B will calculate", is_locked: true  },
-    { id: 64, label: "WSHFC Bond Related Costs",        amount: 432191, in_basis: true,  type: "input",        pct_value: null, notes: "",                    is_locked: false },
-    { id: 65, label: "Bond Legal (Pacifica)",           amount: 85000,  in_basis: true,  type: "input",        pct_value: null, notes: "",                    is_locked: false },
-    { id: 66, label: "Construction Loan Legal",         amount: 140000, in_basis: true,  type: "input",        pct_value: null, notes: "Dev + Lender",         is_locked: false },
-    { id: 67, label: "Equity DD Fees",                  amount: 50000,  in_basis: true,  type: "input",        pct_value: null, notes: "",                    is_locked: false },
-    { id: 68, label: "LIHTC Issuance Fee",              amount: 145825, in_basis: false, type: "input",        pct_value: null, notes: "",                    is_locked: false },
-    { id: 69, label: "LIHTC Legal & Syndication",       amount: 50000,  in_basis: false, type: "input",        pct_value: null, notes: "",                    is_locked: false },
-    { id: 70, label: "Cost Certification",              amount: 30000,  in_basis: true,  type: "input",        pct_value: null, notes: "",                    is_locked: false },
-    { id: 71, label: "Perm Closing Legal",              amount: 50000,  in_basis: false, type: "input",        pct_value: null, notes: "Dev + Lender",         is_locked: false },
-    { id: 72, label: "Loan Guarantor Fee",              amount: 300000, in_basis: false, type: "input",        pct_value: null, notes: "",                    is_locked: false },
-    { id: 73, label: "Finance Consultant / Credits",    amount: 20000,  in_basis: false, type: "input",        pct_value: null, notes: "",                    is_locked: false },
-    { id: 74, label: "CBO Fees / Legal",                amount: 20000,  in_basis: false, type: "input",        pct_value: null, notes: "",                    is_locked: false },
-    { id: 75, label: "Trustee / Fiscal (Bonds)",        amount: 37500,  in_basis: true,  type: "input",        pct_value: null, notes: "",                    is_locked: false },
+    { id: 60, label: "Construction Origination & Fees", amount: null, in_basis: true, bond_basis: true,  type: "pct_loan_const", pct_value: null, notes: "% of construction loan", is_locked: true  },
+    { id: 61, label: "Perm Loan Origination",           amount: null, in_basis: false, bond_basis: false, type: "pct_loan_perm",  pct_value: null, notes: "% of perm loan",         is_locked: true  },
+    { id: 62, label: "Construction Interest",           amount: null, in_basis: true, bond_basis: true,  type: "est_2b",         pct_value: null, notes: "Estimated — Module 2B will calculate", is_locked: true  },
+    { id: 63, label: "Lease-Up Interest",               amount: null, in_basis: false, bond_basis: false, type: "est_2b",         pct_value: null, notes: "Estimated — Module 2B will calculate", is_locked: true  },
+    { id: 64, label: "WSHFC Bond Related Costs",        amount: 432191, in_basis: true, bond_basis: false,  type: "input",        pct_value: null, notes: "",                    is_locked: false },
+    { id: 65, label: "Bond Legal (Pacifica)",           amount: 85000,  in_basis: true, bond_basis: false,  type: "input",        pct_value: null, notes: "",                    is_locked: false },
+    { id: 66, label: "Construction Loan Legal",         amount: 140000, in_basis: true, bond_basis: true,  type: "input",        pct_value: null, notes: "Dev + Lender",         is_locked: false },
+    { id: 67, label: "Equity DD Fees",                  amount: 50000,  in_basis: true, bond_basis: true,  type: "input",        pct_value: null, notes: "",                    is_locked: false },
+    { id: 68, label: "LIHTC Issuance Fee",              amount: 145825, in_basis: false, bond_basis: false, type: "input",        pct_value: null, notes: "",                    is_locked: false },
+    { id: 69, label: "LIHTC Legal & Syndication",       amount: 50000,  in_basis: false, bond_basis: false, type: "input",        pct_value: null, notes: "",                    is_locked: false },
+    { id: 70, label: "Cost Certification",              amount: 30000,  in_basis: true, bond_basis: true,  type: "input",        pct_value: null, notes: "",                    is_locked: false },
+    { id: 71, label: "Perm Closing Legal",              amount: 50000,  in_basis: false, bond_basis: false, type: "input",        pct_value: null, notes: "Dev + Lender",         is_locked: false },
+    { id: 72, label: "Loan Guarantor Fee",              amount: 300000, in_basis: false, bond_basis: false, type: "input",        pct_value: null, notes: "",                    is_locked: false },
+    { id: 73, label: "Finance Consultant / Credits",    amount: 20000,  in_basis: false, bond_basis: false, type: "input",        pct_value: null, notes: "",                    is_locked: false },
+    { id: 74, label: "CBO Fees / Legal",                amount: 20000,  in_basis: false, bond_basis: false, type: "input",        pct_value: null, notes: "",                    is_locked: false },
+    { id: 75, label: "Trustee / Fiscal (Bonds)",        amount: 37500,  in_basis: true, bond_basis: false,  type: "input",        pct_value: null, notes: "",                    is_locked: false },
   ],
   org_reserves: [
-    { id: 90, label: "Operating Reserves",       amount: null,    in_basis: false, type: "calc_opres",  pct_value: null, notes: "6 months NOI",        is_locked: false },
-    { id: 91, label: "Replacement Reserves",     amount: null,    in_basis: false, type: "calc_repres", pct_value: null, notes: "$350/unit",            is_locked: false },
-    { id: 92, label: "ADS Reserve",              amount: null,    in_basis: false, type: "calc_adsres", pct_value: null, notes: "6 months debt service", is_locked: false },
-    { id: 93, label: "Construction Insurance",   amount: 400000,  in_basis: true,  type: "input",       pct_value: null, notes: "Confirm with broker",  is_locked: false },
-    { id: 94, label: "Real Estate Taxes",        amount: 50000,   in_basis: true,  type: "input",       pct_value: null, notes: "During construction",  is_locked: false },
-    { id: 95, label: "Pre-Tenant Engagement",    amount: 68000,   in_basis: true,  type: "input",       pct_value: null, notes: "4.5.3.1 requirement",  is_locked: false },
-    { id: 96, label: "Working Capital / Lease-Up", amount: 159598, in_basis: false, type: "input",      pct_value: null, notes: "3 months key costs",   is_locked: false },
-    { id: 97, label: "Construction Accounting",  amount: 50000,   in_basis: false, type: "input",       pct_value: null, notes: "",                    is_locked: false },
-    { id: 98, label: "Project Audit",            amount: 30000,   in_basis: false, type: "input",       pct_value: null, notes: "",                    is_locked: false },
-    { id: 99, label: "Entity Legal",             amount: 5000,    in_basis: true,  type: "input",       pct_value: null, notes: "",                    is_locked: false },
-    { id: 100,label: "Sponsor Donation",         amount: 65000,   in_basis: false, type: "input",       pct_value: null, notes: "Non-profit",           is_locked: false },
-    { id: 101,label: "Dev Period Utilities",     amount: 25000,   in_basis: true,  type: "input",       pct_value: null, notes: "",                    is_locked: false },
-    { id: 102,label: "Org Other",                amount: 133000,  in_basis: true,  type: "input",       pct_value: null, notes: "Confirm",              is_locked: false },
+    { id: 90, label: "Operating Reserves",       amount: null,    in_basis: false, bond_basis: false, type: "calc_opres",  pct_value: null, notes: "6 months NOI",        is_locked: false },
+    { id: 91, label: "Replacement Reserves",     amount: null,    in_basis: false, bond_basis: false, type: "calc_repres", pct_value: null, notes: "$350/unit",            is_locked: false },
+    { id: 92, label: "ADS Reserve",              amount: null,    in_basis: false, bond_basis: false, type: "calc_adsres", pct_value: null, notes: "6 months debt service", is_locked: false },
+    { id: 93, label: "Construction Insurance",   amount: 400000,  in_basis: true, bond_basis: true,  type: "input",       pct_value: null, notes: "Confirm with broker",  is_locked: false },
+    { id: 94, label: "Real Estate Taxes",        amount: 50000,   in_basis: true, bond_basis: true,  type: "input",       pct_value: null, notes: "During construction",  is_locked: false },
+    { id: 95, label: "Pre-Tenant Engagement",    amount: 68000,   in_basis: true, bond_basis: true,  type: "input",       pct_value: null, notes: "4.5.3.1 requirement",  is_locked: false },
+    { id: 96, label: "Working Capital / Lease-Up", amount: 159598, in_basis: false, bond_basis: false, type: "input",      pct_value: null, notes: "3 months key costs",   is_locked: false },
+    { id: 97, label: "Construction Accounting",  amount: 50000,   in_basis: false, bond_basis: false, type: "input",       pct_value: null, notes: "",                    is_locked: false },
+    { id: 98, label: "Project Audit",            amount: 30000,   in_basis: false, bond_basis: false, type: "input",       pct_value: null, notes: "",                    is_locked: false },
+    { id: 99, label: "Entity Legal",             amount: 5000,    in_basis: true, bond_basis: false,  type: "input",       pct_value: null, notes: "",                    is_locked: false },
+    { id: 100,label: "Sponsor Donation",         amount: 65000,   in_basis: false, bond_basis: false, type: "input",       pct_value: null, notes: "Non-profit",           is_locked: false },
+    { id: 101,label: "Dev Period Utilities",     amount: 25000,   in_basis: true, bond_basis: true,  type: "input",       pct_value: null, notes: "",                    is_locked: false },
+    { id: 102,label: "Org Other",                amount: 133000,  in_basis: true, bond_basis: false,  type: "input",       pct_value: null, notes: "Confirm",              is_locked: false },
   ],
 };
 
@@ -207,6 +207,18 @@ function computeBudget(sections, assumptions, totalUnits, noi, ads) {
   }, 0);
   const eligibleBasis = basisFromSections + devFeeTotal; // dev fee is in basis
 
+  // Aggregate Basis for bond test — land + all depreciable costs
+  // Excludes: perm loan fees, bond issuance costs, reserves, org/syndication, lease-up costs
+  // Dev fee 100% included (economically part of construction cost)
+  const bondBasisFromSections = Object.entries(sections).reduce((total, [, items]) => {
+    return total + items.reduce((s, l) => {
+      if (!l.bond_basis) return s;
+      const amt = resolveAmount(l, calcRefs);
+      return s + (isNaN(amt) ? 0 : amt);
+    }, 0);
+  }, 0);
+  const aggregateBasis = bondBasisFromSections + devFeeTotal; // dev fee 100% in bond basis
+
   return {
     acqTotal,
     hcInputs, contingency, salesTax, hcTotal,
@@ -215,7 +227,7 @@ function computeBudget(sections, assumptions, totalUnits, noi, ads) {
     opRes, repRes, adsRes, orgInputs, orgTotal,
     subtotal,
     devFeeTotal, devFeeCash, devFeeDeferred,
-    tdc, eligibleBasis,
+    tdc, eligibleBasis, aggregateBasis,
   };
 }
 
@@ -380,6 +392,15 @@ function LineRow({ line, resolvedAmount, totalUnits, onUpdate, onRemove, color }
           style={{ cursor:"pointer", accentColor: color }}
         />
       </td>
+      {/* Bond Basis */}
+      <td style={{ padding:"5px 10px", textAlign:"center" }}>
+        <input
+          type="checkbox"
+          checked={line.bond_basis ?? false}
+          onChange={e => onUpdate({ bond_basis: e.target.checked })}
+          style={{ cursor:"pointer", accentColor: "#1a6b3c" }}
+        />
+      </td>
       {/* Notes */}
       <td style={{ padding:"5px 8px" }}>
         <input
@@ -403,7 +424,7 @@ function LineRow({ line, resolvedAmount, totalUnits, onUpdate, onRemove, color }
   );
 }
 
-function BudgetSection({ sectionKey, lines, sectionTotal, basisTotal, totalUnits, calcs, onUpdateLine, onRemoveLine, onAddLine, color, label, showHeader }) {
+function BudgetSection({ sectionKey, lines, sectionTotal, basisTotal, bondBasisTotal, totalUnits, calcs, onUpdateLine, onRemoveLine, onAddLine, color, label, showHeader }) {
   const [collapsed, setCollapsed] = useState(false);
 
   return (
@@ -419,14 +440,18 @@ function BudgetSection({ sectionKey, lines, sectionTotal, basisTotal, totalUnits
             {collapsed ? "▸" : "▾"} {label}
           </span>
         </div>
-        <div style={{ display:"flex", gap:20, alignItems:"center" }}>
+        <div style={{ display:"flex", gap:16, alignItems:"center" }}>
           <span style={{ fontSize:10 }}>
             <span style={{ opacity:0.65, fontSize:8, marginRight:4 }}>TOTAL</span>
             {fmt$(sectionTotal)}
           </span>
           <span style={{ fontSize:10 }}>
-            <span style={{ opacity:0.65, fontSize:8, marginRight:4 }}>IN BASIS</span>
+            <span style={{ opacity:0.65, fontSize:8, marginRight:4 }}>LIHTC BASIS</span>
             {fmt$(basisTotal)}
+          </span>
+          <span style={{ fontSize:10 }}>
+            <span style={{ opacity:0.65, fontSize:8, marginRight:4 }}>BOND BASIS</span>
+            {fmt$(bondBasisTotal)}
           </span>
         </div>
       </div>
@@ -435,11 +460,12 @@ function BudgetSection({ sectionKey, lines, sectionTotal, basisTotal, totalUnits
         <div style={{ background:"white", border:"1px solid #e0e0e0", borderTop:"none", borderRadius:"0 0 6px 6px", overflowX:"auto" }}>
           <table style={{ width:"100%", borderCollapse:"collapse", fontSize:11, fontFamily:"Inter, sans-serif", tableLayout:"fixed", minWidth:808 }}>
             <colgroup>
-              <col style={{ width:320 }} />
+              <col style={{ width:280 }} />
               <col style={{ width:140 }} />
               <col style={{ width:76 }} />
               <col style={{ width:60 }} />
-              <col style={{ width:180 }} />
+              <col style={{ width:60 }} />
+              <col style={{ width:160 }} />
               <col style={{ width:32 }} />
             </colgroup>
             {showHeader && (
@@ -448,7 +474,8 @@ function BudgetSection({ sectionKey, lines, sectionTotal, basisTotal, totalUnits
                   <th style={{ padding:"4px 10px", paddingLeft:12, textAlign:"left",   fontSize:8, color:"#888", fontWeight:700, textTransform:"uppercase", letterSpacing:"0.07em" }}>Line Item</th>
                   <th style={{ padding:"4px 10px", textAlign:"right",  fontSize:8, color:"#888", fontWeight:700, textTransform:"uppercase", letterSpacing:"0.07em" }}>Amount</th>
                   <th style={{ padding:"4px 8px",  textAlign:"right",  fontSize:8, color:"#888", fontWeight:700, textTransform:"uppercase", letterSpacing:"0.07em" }}>$/Unit</th>
-                  <th style={{ padding:"4px 10px", textAlign:"center", fontSize:8, color:"#888", fontWeight:700, textTransform:"uppercase", letterSpacing:"0.07em" }}>Basis</th>
+                  <th style={{ padding:"4px 10px", textAlign:"center", fontSize:8, color:"#888", fontWeight:700, textTransform:"uppercase", letterSpacing:"0.07em" }}>LIHTC Basis</th>
+                  <th style={{ padding:"4px 10px", textAlign:"center", fontSize:8, color:"#1a6b3c", fontWeight:700, textTransform:"uppercase", letterSpacing:"0.07em" }}>Bond Basis</th>
                   <th style={{ padding:"4px 8px",  textAlign:"left",   fontSize:8, color:"#888", fontWeight:700, textTransform:"uppercase", letterSpacing:"0.07em" }}>Notes</th>
                   <th />
                 </tr>
@@ -525,20 +552,21 @@ export default function DevBudgetPanel({ onBudgetUpdate }) {
   }, [sections, updateModule]);
 
   const addLine = useCallback((sectionKey) => {
-    const newLine = { id: mkId(), label: "New Line Item", amount: 0, in_basis: true, type: "input", pct_value: null, notes: "", is_locked: false };
+    const newLine = { id: mkId(), label: "New Line Item", amount: 0, in_basis: true, bond_basis: false, type: "input", pct_value: null, notes: "", is_locked: false };
     updateModule("budget", { sections: { ...sections, [sectionKey]: [...sections[sectionKey], newLine] } });
   }, [sections, updateModule]);
 
   // Section totals
   const getSectionTotals = (sectionKey) => {
     const items = sections[sectionKey];
-    let total = 0, basis = 0;
+    let total = 0, basis = 0, bondBasis = 0;
     items.forEach(l => {
       const amt = resolveAmount(l, calcs);
       total += amt;
-      if (l.in_basis) basis += amt;
+      if (l.in_basis)   basis     += amt;
+      if (l.bond_basis) bondBasis += amt;
     });
-    return { total, basis };
+    return { total, basis, bondBasis };
   };
 
   const TH = ({ children, align = "right" }) => (
@@ -566,7 +594,7 @@ export default function DevBudgetPanel({ onBudgetUpdate }) {
       {/* Budget sections */}
       <div style={{ display:"flex", flexDirection:"column", gap:6, marginBottom:6 }}>
         {Object.entries(SECTION_CONFIG).map(([key, cfg], idx) => {
-          const { total, basis } = getSectionTotals(key);
+          const { total, basis, bondBasis } = getSectionTotals(key);
           return (
             <BudgetSection
               key={key}
@@ -574,6 +602,7 @@ export default function DevBudgetPanel({ onBudgetUpdate }) {
               lines={sections[key]}
               sectionTotal={total}
               basisTotal={basis}
+              bondBasisTotal={bondBasis}
               totalUnits={totalUnits}
               calcs={calcs}
               color={cfg.color}
@@ -594,13 +623,17 @@ export default function DevBudgetPanel({ onBudgetUpdate }) {
           <span style={{ fontSize:9, fontWeight:700, letterSpacing:"0.12em", textTransform:"uppercase" }}>
             Developer Fee
           </span>
-          <div style={{ display:"flex", gap:20, alignItems:"center" }}>
+          <div style={{ display:"flex", gap:16, alignItems:"center" }}>
             <span style={{ fontSize:10 }}>
               <span style={{ opacity:0.5, fontSize:8, marginRight:4 }}>TOTAL</span>
               {fmt$(calcs.devFeeTotal)}
             </span>
             <span style={{ fontSize:10 }}>
-              <span style={{ opacity:0.5, fontSize:8, marginRight:4 }}>{(assumptions.dev_fee_pct * 100).toFixed(1)}% OF COSTS</span>
+              <span style={{ opacity:0.5, fontSize:8, marginRight:4 }}>LIHTC BASIS</span>
+              {fmt$(calcs.devFeeTotal)}
+            </span>
+            <span style={{ fontSize:10 }}>
+              <span style={{ opacity:0.65, fontSize:8, marginRight:4 }}>BOND BASIS</span>
               {fmt$(calcs.devFeeTotal)}
             </span>
           </div>
@@ -621,7 +654,10 @@ export default function DevBudgetPanel({ onBudgetUpdate }) {
                   <td style={{ padding:"5px 10px", textAlign:"center", fontSize:9, color:"#1a6b3c" }}>
                     {row.basis ? "✓" : ""}
                   </td>
-                  <td colSpan={2} />
+                  <td style={{ padding:"5px 10px", textAlign:"center", fontSize:9, color:"#1a6b3c" }}>
+                    ✓
+                  </td>
+                  <td colSpan={1} />
                 </tr>
               ))}
             </tbody>
@@ -633,15 +669,15 @@ export default function DevBudgetPanel({ onBudgetUpdate }) {
       <div style={{ background:"#111", color:"white", borderRadius:6, padding:"16px 20px", marginTop:8 }}>
         <div style={{ display:"grid", gridTemplateColumns:"repeat(5, 1fr)", gap:16 }}>
           {[
-            { label:"Total Dev Cost",    value: fmt$(calcs.tdc),           sub: fmt$(Math.round(calcs.tdc / totalUnits)) + "/unit", highlight: true },
-            { label:"Eligible Basis",    value: fmt$(calcs.eligibleBasis), sub: fmtPct(calcs.eligibleBasis / calcs.tdc) + " of TDC" },
-            { label:"Dev Fee",           value: fmt$(calcs.devFeeTotal),   sub: fmtPct(assumptions.dev_fee_pct) + " of costs" },
-            { label:"Hard Costs",        value: fmt$(calcs.hcTotal),       sub: fmt$(Math.round(calcs.hcTotal / totalUnits)) + "/unit" },
-            { label:"TDC ex Dev Fee",    value: fmt$(calcs.subtotal),      sub: fmt$(Math.round(calcs.subtotal / totalUnits)) + "/unit" },
+            { label:"Total Dev Cost",    value: fmt$(calcs.tdc),              sub: fmt$(Math.round(calcs.tdc / totalUnits)) + "/unit",           highlight: true },
+            { label:"Eligible Basis",    value: fmt$(calcs.eligibleBasis),    sub: fmtPct(calcs.eligibleBasis / calcs.tdc) + " of TDC" },
+            { label:"Aggregate Basis",   value: fmt$(calcs.aggregateBasis),   sub: fmtPct(calcs.aggregateBasis / calcs.tdc) + " of TDC · bond test denominator", accent: "#4ade80" },
+            { label:"Dev Fee",           value: fmt$(calcs.devFeeTotal),      sub: fmtPct(assumptions.dev_fee_pct) + " of costs" },
+            { label:"Hard Costs",        value: fmt$(calcs.hcTotal),          sub: fmt$(Math.round(calcs.hcTotal / totalUnits)) + "/unit" },
           ].map(m => (
             <div key={m.label}>
               <div style={{ fontSize:8, color:"#888", textTransform:"uppercase", letterSpacing:"0.08em", marginBottom:4 }}>{m.label}</div>
-              <div style={{ fontSize: m.highlight ? 18 : 14, fontWeight:700, fontFamily:"Inter, sans-serif", color: m.highlight ? "white" : "#ccc" }}>
+              <div style={{ fontSize: m.highlight ? 18 : 14, fontWeight:700, fontFamily:"Inter, sans-serif", color: m.highlight ? "white" : m.accent ? m.accent : "#ccc" }}>
                 {m.value}
               </div>
               <div style={{ fontSize:9, color:"#555", marginTop:2 }}>{m.sub}</div>

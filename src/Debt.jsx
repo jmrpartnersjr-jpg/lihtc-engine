@@ -815,7 +815,7 @@ export default function DebtPanel() {
   const totalUnits = (unitMix?.rows ?? []).reduce((s, r) => s + (r.count || 0), 0) || 175;
 
   // Lightweight TDC calc (mirrors DevBudget)
-  let tdc = 67824621, deferredDevFee = 5927282;
+  let tdc = 67824621, deferredDevFee = 5927282, aggrBasis = null;
   if (budget?.sections && budget?.assumptions) {
     const a = budget.assumptions;
     const s = budget.sections;
@@ -837,6 +837,19 @@ export default function DebtPanel() {
     const subtotal = acqTotal+hcTotal+scTotal+finTotal+orgTotal;
     tdc = subtotal+(subtotal*(a.dev_fee_pct||0.15));
     deferredDevFee = subtotal*(a.dev_fee_pct||0.15)*(1-(a.cash_fee_pct||0.33));
+    // Aggregate basis — sum of bond_basis lines + dev fee (100% in bond basis)
+    const _devFee = subtotal*(a.dev_fee_pct||0.15);
+    aggrBasis = Object.values(s).flat().reduce((sum, l) => {
+      if (!l.bond_basis) return sum;
+      // For calculated lines, use the same resolveAmount logic
+      let amt = l.amount || 0;
+      if (l.type === 'pct_loan_const') amt = ((a.const_loan_amount||0)+(a.taxable_loan_amount||0))*(a.const_origination_pct||0);
+      else if (l.type === 'pct_loan_perm') amt = 0; // perm orig not in bond basis
+      else if (l.type === 'est_2b') amt = l.label?.toLowerCase().includes('lease') ? 0 : (a.const_interest_est||0);
+      else if (l.type === 'pct_hc') amt = l.label?.toLowerCase().includes('tax') ? salesTax : contingency;
+      else if (l.type === 'pct_sc') amt = scContingency;
+      return sum + (isNaN(amt) ? 0 : amt);
+    }, _devFee); // dev fee 100% in bond basis
   }
 
   // Read LIHTC equity from Module 3 — must come after TDC is computed
@@ -954,16 +967,22 @@ export default function DebtPanel() {
               </div>
               {/* Bond test check */}
               {(() => {
-                const bondPct = tdc > 0 ? calcs.teLoan / (tdc - ((moduleStates.budget?.sections?.acquisition?.reduce((s,l)=>s+(l.amount||0),0)) || 4488000)) : 0;
+                // Use budget-derived aggregate basis if available, else fall back to TDC - land
+                const _aggrBasis = aggrBasis || (tdc - ((moduleStates.budget?.sections?.acquisition?.reduce((s,l)=>s+(l.amount||0),0)) || 4488000));
+                const bondPct = _aggrBasis > 0 ? calcs.teLoan / _aggrBasis : 0;
+                const testThreshold = (construction.bond_test_target_pct || 0.35);
                 const passes = bondPct >= 0.25;
                 return (
-                  <div style={{ marginTop:8, padding:"5px 8px", borderRadius:4,
+                  <div style={{ marginTop:8, padding:"6px 10px", borderRadius:4,
                     background: passes ? "#f0f9f4" : "#fce8e3",
                     border:`1px solid ${passes ? "#b8dfc8" : "#f5c2b0"}` }}>
-                    <span style={{ fontSize:8, fontWeight:700,
-                      color: passes ? "#1a6b3c" : "#8B2500" }}>
+                    <div style={{ fontSize:8, fontWeight:700, color: passes ? "#1a6b3c" : "#8B2500", marginBottom:3 }}>
                       {passes ? "✓" : "✗"} 25% Bond Test: {(bondPct * 100).toFixed(1)}% of aggregate basis
-                    </span>
+                    </div>
+                    <div style={{ fontSize:8, color:"#888" }}>
+                      TE Loan {fmt$(calcs.teLoan)} ÷ Agg. Basis {fmt$(_aggrBasis)}
+                      {aggrBasis ? " · from Dev Budget bond_basis flags" : " · est. (set budget line flags for exact calc)"}
+                    </div>
                   </div>
                 );
               })()}

@@ -86,7 +86,8 @@ function computeLIHTC(inputs, budgetCalcs, totalUnits) {
 
   // Bond test
   // Aggregate basis = TDC - land (NOT eligible basis — different calculation)
-  const aggregateBasis = tdc - landCost;
+  // Use budget-derived aggregate basis if available, else fall back to TDC - land
+  const aggregateBasis = budgetCalcs?.aggregateBasis || (tdc - landCost);
   const bondPct        = aggregateBasis > 0 ? i.te_bond_amount / aggregateBasis : 0;
   const testThreshold  = (i.placed_in_service_year || 2028) > 2025 ? 0.25 : 0.50;
   const bondTestPass   = bondPct >= testThreshold;
@@ -282,7 +283,7 @@ export default function TaxCreditPanel() {
 
   // Compute budget numbers from moduleStates.budget
   // Uses same logic as DevBudget computeBudget to ensure consistent TDC
-  let tdc = 67824621, acqTotal = 4488000;
+  let tdc = 67824621, acqTotal = 4488000, tcAggrBasis = null;
   if (budget?.sections && budget?.assumptions) {
     const a = budget.assumptions;
     const s = budget.sections;
@@ -323,9 +324,29 @@ export default function TaxCreditPanel() {
     const subtotal = acqTotal + hcTotal + scTotal + finTotal + orgTotal;
     const devFee   = subtotal * (a.dev_fee_pct || 0.15);
     tdc = subtotal + devFee;
+    // Aggregate basis from bond_basis flags
+    const _cOrig  = ((a.const_loan_amount||0)+(a.taxable_loan_amount||0))*(a.const_origination_pct||0);
+    const _cInt   = a.const_interest_est||0;
+    tcAggrBasis = Object.values(s).flat().reduce((sum, l) => {
+      if (!l.bond_basis) return sum;
+      let amt = l.amount || 0;
+      if (l.type === 'pct_loan_const') amt = _cOrig;
+      else if (l.type === 'pct_loan_perm') amt = 0;
+      else if (l.type === 'est_2b') amt = l.label?.toLowerCase().includes('lease') ? 0 : _cInt;
+      else if (l.type === 'pct_hc') {
+        const _hcAll = s.hard_costs?.filter(x=>x.type==="input").reduce((a,x)=>a+(x.amount||0),0)||0;
+        const _ppAmt = s.hard_costs?.find(x=>x.label?.toLowerCase().includes("p&p")||x.label?.toLowerCase().includes("bond premium"));
+        const _ppA = _ppAmt?.type==="input"?(_ppAmt?.amount||0):0;
+        const _base = _hcAll-_ppA;
+        const _cont = _base*(a.hc_contingency_pct||0);
+        amt = l.label?.toLowerCase().includes('tax') ? (_base+_cont)*(a.sales_tax_pct||0) : _cont;
+      }
+      else if (l.type === 'pct_sc') amt = (s.soft_costs?.filter(x=>x.type==="input").reduce((a,x)=>a+(x.amount||0),0)||0)*(a.sc_contingency_pct||0);
+      return sum + (isNaN(amt)?0:amt);
+    }, devFee); // dev fee 100% in bond basis
   }
 
-  const calcs = computeLIHTC(inputs, { tdc, acqTotal }, totalUnits);
+  const calcs = computeLIHTC(inputs, { tdc, acqTotal, aggregateBasis: tcAggrBasis }, totalUnits);
   const update = (patch) => updateModule("lihtc", patch);
 
   const inpStyle = { background:"#f8f8f8", border:"1px solid #e0e0e0", borderRadius:4,
@@ -654,8 +675,10 @@ export default function TaxCreditPanel() {
                 </span>
               </div>
               <div style={{ fontSize:8, color:"#aaa", marginTop:6 }}>
-                Note: Aggregate basis includes land. Eligible basis does not. These are different calculations.
-                Recycled bonds do not count toward the test threshold.
+                {tcAggrBasis
+                  ? "Aggregate basis computed from Dev Budget bond_basis flags — land + depreciable costs + dev fee, excl. perm fees, bond issuance costs, reserves."
+                  : "Aggregate basis estimated as TDC − land. Set bond_basis flags in Dev Budget for exact calculation."}
+                {" "}Recycled bonds do not count toward the test threshold.
               </div>
             </div>
           </div>
