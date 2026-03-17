@@ -631,8 +631,7 @@ export default function UnitMixPanel({ onRevenueChange }) {
                             placeholder={r.ami_pct === 0 ? "—" : fmt$(Math.max(0, netMax))}
                             style={{ color: isOverride ? "#5a3a00" : "#111", fontWeight: isOverride ? 700 : 400, width:80 }}
                           />
-                          {isOverride && r.rent_override > netMax && <span style={{ position:"absolute", right:-14, top:4, fontSize:9, color:"#8B2500" }} title="Above HUD net max">↑</span>}
-                          {isOverride && r.rent_override < netMax && <span style={{ position:"absolute", right:-14, top:4, fontSize:9, color:"#1a6b3c" }} title="Below HUD net max">↓</span>}
+
                         </div>
                         {/* Reset button — only shown when override is active */}
                         {isOverride && (
