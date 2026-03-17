@@ -795,32 +795,6 @@ export default function DebtPanel() {
   const subdebt       = moduleStates.debt?.subdebt       ?? DEFAULT_SUBDEBT;
   const otherSources  = moduleStates.debt?.other_sources ?? DEFAULT_OTHER_SOURCES;
 
-  // Read LIHTC equity from Module 3
-  // Recompute Module 3 outputs from saved inputs
-  const lihtcInputs = moduleStates.lihtc || {};
-  let lihtcEquity = null, stateEquity = null;
-  if (lihtcInputs.applicable_pct !== undefined || lihtcInputs.investor_price !== undefined) {
-    // Inline Module 3 calc to get equity raised
-    const _li = { ...{
-      credit_type:"4pct", applicable_pct:0.04, basis_boost:true, boost_factor:1.30,
-      applicable_fraction:1.0, credit_period:10, investor_price:0.82,
-      non_basis_costs:6527411, commercial_costs:0, federal_grants:0, historic_reduction:0,
-      state_credit_applies:false, state_credit_annual:0, state_credit_period:10, state_credit_price:0,
-    }, ...lihtcInputs };
-    const _adjBasis  = tdc - (budget?.sections?.acquisition?.reduce((s,l)=>s+(l.amount||0),0)||4488000)
-      - (_li.non_basis_costs||0) - (_li.commercial_costs||0)
-      - (_li.federal_grants||0) - (_li.historic_reduction||0);
-    const _boosted   = _li.basis_boost ? _adjBasis * (_li.boost_factor||1.3) : _adjBasis;
-    const _qualified = _boosted * (_li.applicable_fraction||1);
-    const _rate      = _li.credit_type==="9pct" ? 0.09 : Math.max(0.04, _li.applicable_pct||0.04);
-    const _annual    = _qualified * _rate;
-    const _total     = _annual * (_li.credit_period||10);
-    lihtcEquity = _total * (_li.investor_price||0);
-    stateEquity = _li.state_credit_applies
-      ? (_li.state_credit_annual||0) * (_li.state_credit_period||10) * (_li.state_credit_price||0)
-      : 0;
-  }
-
   // TDC from budget module
   const budget = moduleStates.budget;
   const unitMix = moduleStates.unit_mix;
@@ -849,6 +823,31 @@ export default function DebtPanel() {
     const subtotal = acqTotal+hcTotal+scTotal+finTotal+orgTotal;
     tdc = subtotal+(subtotal*(a.dev_fee_pct||0.15));
     deferredDevFee = subtotal*(a.dev_fee_pct||0.15)*(1-(a.cash_fee_pct||0.33));
+  }
+
+  // Read LIHTC equity from Module 3 — must come after TDC is computed
+  const lihtcInputs = moduleStates.lihtc || {};
+  let lihtcEquity = null, stateEquity = null;
+  if (lihtcInputs.applicable_pct !== undefined || lihtcInputs.investor_price !== undefined) {
+    const _li = { ...{
+      credit_type:"4pct", applicable_pct:0.04, basis_boost:true, boost_factor:1.30,
+      applicable_fraction:1.0, credit_period:10, investor_price:0.82,
+      non_basis_costs:6527411, commercial_costs:0, federal_grants:0, historic_reduction:0,
+      state_credit_applies:false, state_credit_annual:0, state_credit_period:10, state_credit_price:0,
+    }, ...lihtcInputs };
+    const _acqTotal  = budget?.sections?.acquisition?.reduce((s,l)=>s+(l.amount||0),0) || 4488000;
+    const _adjBasis  = tdc - _acqTotal
+      - (_li.non_basis_costs||0) - (_li.commercial_costs||0)
+      - (_li.federal_grants||0)  - (_li.historic_reduction||0);
+    const _boosted   = _li.basis_boost ? _adjBasis * (_li.boost_factor||1.3) : _adjBasis;
+    const _qualified = _boosted * (_li.applicable_fraction||1);
+    const _rate      = _li.credit_type==="9pct" ? 0.09 : Math.max(0.04, _li.applicable_pct||0.04);
+    const _annual    = _qualified * _rate;
+    const _total     = _annual * (_li.credit_period||10);
+    lihtcEquity      = _total * (_li.investor_price||0);
+    stateEquity      = _li.state_credit_applies
+      ? (_li.state_credit_annual||0) * (_li.state_credit_period||10) * (_li.state_credit_price||0)
+      : 0;
   }
 
   const calcs = computeDebt(construction, permanent, subdebt, null, null);
