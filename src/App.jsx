@@ -771,7 +771,7 @@ export default function App() {
             <UnitMixPanel onRevenueChange={rev => { setUnitMixRev(rev); setTab("unitmix"); }} />
           )}
           {tab==="debt" && (
-            <DebtPanel scenario={dbScenario} baseFA={baseFA} budgetWithCalc={budgetBasis?.budget || null} onFAUpdate={fa => setDbFA(prev => ({ ...prev, [activeId]: fa }))} />
+            <DebtPanel />
           )}
           {tab==="devbudget" && (
             <DevBudgetPanel

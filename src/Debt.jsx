@@ -1,476 +1,1142 @@
-import { useState, useMemo, useEffect, useCallback } from "react";
-import { fetchScenarioSources, upsertScenarioSource, deleteScenarioSource,
-         upsertFinancialAssumptions } from "./db.js";
+import { useState, useCallback, useRef } from "react";
+import { useLihtc } from "./context/LihtcContext.jsx";
 
-const fmt$  = v => v == null ? "—" : "$" + Math.round(v).toLocaleString();
-const fmtM  = v => v == null ? "—" : "$" + (v / 1e6).toFixed(3) + "M";
-const fmtX  = v => v == null ? "—" : v.toFixed(3) + "x";
-const fmtPct= v => v == null ? "—" : (v * 100).toFixed(2) + "%";
-const pct   = v => v == null ? "" : (v * 100).toFixed(3);
+// ─────────────────────────────────────────────────────────────────────────────
+// MODULE 4 — DEBT STACK
+// Construction loan, permanent loan (DSCR sizing), subordinate debt stack.
+// Subdebt supports: cash pay, IO, accrual (simple/compound), contingent, forgivable.
+// Priority is drag-to-reorder. Balance projection is expandable per loan.
+// ─────────────────────────────────────────────────────────────────────────────
 
-function calcADS(principal, annualRate, amortYears) {
-  if (!principal || !annualRate || !amortYears) return 0;
-  const n = amortYears * 12, r = annualRate / 12;
-  if (r === 0) return principal / n * 12;
-  const pmt = principal * r * Math.pow(1+r,n) / (Math.pow(1+r,n)-1);
-  return pmt * 12;
-}
+const fmt$   = v => v == null ? "—" : "$" + Math.round(v).toLocaleString();
+const fmtPct = v => v == null ? "—" : (v * 100).toFixed(3) + "%";
+const fmtPct2 = v => v == null ? "—" : (v * 100).toFixed(2) + "%";
+const fmtX   = v => v == null ? "—" : v.toFixed(2) + "x";
 
-function calcLoanFromDSCR(noi, dscr, rate, amort) {
-  if (!noi || !dscr || !rate || !amort) return 0;
-  const ads = noi / dscr;
-  const n = amort * 12, r = rate / 12;
-  if (r === 0) return (ads/12) * n;
-  return (ads/12) * (1 - Math.pow(1+r,-n)) / r;
-}
+let _id = 400;
+const mkId = () => ++_id;
 
-function calcBalanceAtYear(principal, rate, amortYears, year) {
-  if (!principal || !rate || !amortYears) return 0;
-  const n = amortYears * 12, r = rate / 12;
-  const pmt = principal * r * Math.pow(1+r,n) / (Math.pow(1+r,n)-1);
-  let bal = principal;
-  for (let i = 0; i < year * 12; i++) bal = bal * (1+r) - pmt;
-  return Math.max(bal, 0);
-}
-
-const SECTION = { background:"white", border:"1px solid #e0e0e0", borderRadius:6, padding:"16px 20px", marginBottom:16 };
-const STITLE = { fontSize:9, fontWeight:700, letterSpacing:"0.1em", textTransform:"uppercase", color:"#888", marginBottom:14 };
-const LABEL = { fontSize:10, color:"#666", textTransform:"uppercase", letterSpacing:"0.04em", marginBottom:4, display:"block" };
-const iStyle = (focused, ro, ac="#1a3a6b") => ({
-  width:"100%", padding:"6px 10px", borderRadius:3, boxSizing:"border-box",
-  border:`1px solid ${focused ? ac : "#e0e0e0"}`,
-  fontSize:12, fontFamily:"'DM Mono',monospace",
-  color:ro?"#888":"#111", background:ro?"#f8f8f8":"white", outline:"none",
-});
-
-const TYPE_META = {
-  const_loan_te:      { label:"Tax-Exempt Const Loan",   isDebt:true, isConst:true  },
-  const_loan_taxable: { label:"Taxable Const Loan",       isDebt:true, isConst:true  },
-  perm_loan:          { label:"Permanent Loan",            isDebt:true, isConst:false },
-  sub_debt:           { label:"Sub-Debt / Soft Loan",      isDebt:true, isConst:false },
-  grant:              { label:"Grant",                     isDebt:false,isConst:false },
-  other:              { label:"Other Source",              isDebt:false,isConst:false },
-  lihtc_equity:       { label:"LIHTC LP Equity",           isDebt:false,isConst:false },
-  deferred_fee:       { label:"Deferred Developer Fee",    isDebt:false,isConst:false },
+// ─────────────────────────────────────────────────────────────────────────────
+// DEFAULT STATE — Apollo SL calibrated
+// ─────────────────────────────────────────────────────────────────────────────
+const DEFAULT_CONSTRUCTION = {
+  lender:              "TBD",
+  te_loan_amount:      32941402,
+  taxable_loan_amount: 17814416,
+  te_rate:             0.0585,
+  taxable_rate:        0.0585,
+  term_months:         36,
+  ltc_pct:             0.82,
+  origination_pct:     0.01,
+  avg_draw_pct:        0.65,   // avg % drawn during construction (for interest estimate)
+  leaseup_months:      12,
+  leaseup_draw_pct:    0.85,   // avg % drawn during lease-up
 };
 
-function Metric({ label, value, ok, warn, sub, bold }) {
-  const color = ok===true?"#1a6b3c":ok===false?"#8B2500":warn?"#5a3a00":"#111";
+const DEFAULT_PERMANENT = {
+  lender:            "",
+  lender_type:       "Agency",  // Agency / Bank / CDFI / HFA
+  loan_program:      "",
+  loan_amount:       34049115,
+  rate:              0.0585,
+  amort_years:       40,
+  term_years:        15,
+  origination_pct:   0.01,
+  io_years:          0,
+  mip_annual:        0,
+  dscr_requirement:  1.15,
+  // NOI — temp until proforma module wired
+  noi_override:      2553365,
+  use_noi_override:  true,
+};
+
+const DEFAULT_SUBDEBT = [
+  {
+    id: 401, label: "Seller Note", priority: 1,
+    loan_type: "soft", amount: 1000000, rate: 0.0, term_years: 15,
+    payment_type: "accrual", cash_pay_annual: 0, compound_accrual: false,
+    forgive_pct_per_year: 0, in_ads: false, notes: "",
+  },
+  {
+    id: 402, label: "CHIP", priority: 2,
+    loan_type: "soft", amount: 900000, rate: 0.005, term_years: 15,
+    payment_type: "accrual", cash_pay_annual: 0, compound_accrual: false,
+    forgive_pct_per_year: 0, in_ads: false, notes: "",
+  },
+  {
+    id: 403, label: "Sponsor Note", priority: 3,
+    loan_type: "sponsor", amount: 346031, rate: 0.0, term_years: 15,
+    payment_type: "accrual", cash_pay_annual: 0, compound_accrual: false,
+    forgive_pct_per_year: 0, in_ads: false, notes: "",
+  },
+];
+
+const DEFAULT_OTHER_SOURCES = [
+  { id: 501, label: "GP Equity / Cash",  amount: 0,    notes: "" },
+  { id: 502, label: "HOME Funds",        amount: 0,    notes: "" },
+  { id: 503, label: "FHLB AHP",          amount: 0,    notes: "" },
+  { id: 504, label: "CDBG",              amount: 0,    notes: "" },
+  { id: 505, label: "Other Grant",       amount: 0,    notes: "" },
+];
+
+const LOAN_TYPE_OPTIONS = [
+  { value: "soft",        label: "Soft Loan" },
+  { value: "cashflow",    label: "Cash Flow" },
+  { value: "forgivable",  label: "Forgivable" },
+  { value: "sponsor",     label: "Sponsor Note" },
+  { value: "seller",      label: "Seller Note" },
+  { value: "deferred_fee",label: "Deferred Fee" },
+];
+
+const PAYMENT_TYPE_OPTIONS = [
+  { value: "cash_pay",   label: "Cash Pay (Full Amort)" },
+  { value: "io",         label: "Interest Only" },
+  { value: "partial",    label: "Partial Cash Pay" },
+  { value: "accrual",    label: "Accrual (No Payment)" },
+  { value: "contingent", label: "Contingent on CF" },
+  { value: "forgivable", label: "Forgivable" },
+];
+
+const LOAN_TYPE_COLORS = {
+  soft:        "#1a3a6b",
+  cashflow:    "#1a6b3c",
+  forgivable:  "#5a3a00",
+  sponsor:     "#4a1a6b",
+  seller:      "#8B2500",
+  deferred_fee:"#444",
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CALCULATION ENGINE
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Debt constant — annual payment per $1 of loan (P&I)
+function debtConstant(rate, amortYears) {
+  if (!rate || !amortYears) return 0;
+  const r = rate / 12;
+  const n = amortYears * 12;
+  const monthlyPmt = (r * Math.pow(1 + r, n)) / (Math.pow(1 + r, n) - 1);
+  return monthlyPmt * 12;
+}
+
+// Annual debt service for a given loan amount
+function annualDS(amount, rate, amortYears, ioYears = 0) {
+  if (!amount || !rate) return 0;
+  if (ioYears > 0) return amount * rate; // IO payment
+  const dc = debtConstant(rate, amortYears);
+  return amount * dc;
+}
+
+// Loan balance at end of year N (after N full years of payments)
+function loanBalanceAtYear(amount, rate, amortYears, year) {
+  if (!amount || !rate || !amortYears) return amount;
+  const r = rate / 12;
+  const n = amortYears * 12;
+  const p = year * 12; // payments made
+  if (p >= n) return 0;
+  const factor = (Math.pow(1 + r, n) - Math.pow(1 + r, p)) / (Math.pow(1 + r, n) - 1);
+  return amount * factor;
+}
+
+// Subdebt balance projection — returns array of {year, openBal, interest, payment, accrual, forgiven, closeBal}
+function subdebtProjection(loan, termYears) {
+  const rows = [];
+  let balance = loan.amount || 0;
+  const rate = loan.rate || 0;
+  const forgiveRate = (loan.forgive_pct_per_year || 0) / 100;
+
+  for (let yr = 1; yr <= termYears; yr++) {
+    const openBal = balance;
+    const interest = loan.compound_accrual
+      ? openBal * rate           // compound: interest on running balance
+      : (loan.amount || 0) * rate; // simple: interest always on original principal
+
+    let payment = 0;
+    let forgiven = 0;
+
+    switch (loan.payment_type) {
+      case "cash_pay":
+        payment = annualDS(loan.amount, rate, loan.term_years || 15);
+        break;
+      case "io":
+        payment = openBal * rate;
+        break;
+      case "partial":
+        payment = loan.cash_pay_annual || 0;
+        break;
+      case "accrual":
+      case "contingent":
+        payment = 0;
+        break;
+      case "forgivable":
+        forgiven = (loan.amount || 0) * forgiveRate;
+        payment = 0;
+        break;
+      default:
+        payment = 0;
+    }
+
+    const accrual = Math.max(0, interest - payment);
+    const closeBal = Math.max(0, openBal + interest - payment - forgiven);
+    rows.push({ year: yr, openBal, interest, payment, accrual, forgiven, closeBal });
+    balance = closeBal;
+  }
+  return rows;
+}
+
+// Annual cash-pay debt service for a subdebt loan
+function subdebtAnnualDS(loan) {
+  if (!loan.in_ads) return 0;
+  switch (loan.payment_type) {
+    case "cash_pay":   return annualDS(loan.amount, loan.rate, loan.term_years);
+    case "io":         return (loan.amount || 0) * (loan.rate || 0);
+    case "partial":    return loan.cash_pay_annual || 0;
+    default:           return 0;
+  }
+}
+
+function computeDebt(construction, permanent, subdebt, lihtcCalcs, budgetCalcs) {
+  // Construction
+  const combinedConstLoan = (construction.te_loan_amount || 0) + (construction.taxable_loan_amount || 0);
+  const constOrigination  = combinedConstLoan * (construction.origination_pct || 0);
+
+  // Interest estimate — average draw-down method
+  // TE portion
+  const teInt = (construction.te_loan_amount || 0)
+    * (construction.te_rate || 0)
+    * (construction.avg_draw_pct || 0.65)
+    * ((construction.term_months || 36) / 12);
+  // Taxable portion
+  const taxInt = (construction.taxable_loan_amount || 0)
+    * (construction.taxable_rate || 0)
+    * (construction.avg_draw_pct || 0.65)
+    * ((construction.term_months || 36) / 12);
+  // Lease-up interest
+  const leaseupInt = combinedConstLoan
+    * ((construction.te_rate || 0))
+    * (construction.leaseup_draw_pct || 0.85)
+    * ((construction.leaseup_months || 12) / 12);
+
+  const constInterestEst = teInt + taxInt;
+
+  // Permanent loan — DSCR sizing
+  const noi = permanent.use_noi_override
+    ? (permanent.noi_override || 0)
+    : (lihtcCalcs?.noi || 0);
+
+  const maxADS      = noi / (permanent.dscr_requirement || 1.15);
+  const dc          = debtConstant(permanent.rate, permanent.amort_years);
+  const maxLoanDSCR = dc > 0 ? maxADS / dc : 0;
+  const permADS     = annualDS(permanent.loan_amount, permanent.rate, permanent.amort_years, permanent.io_years);
+  const permDSCR    = permADS > 0 ? noi / permADS : 0;
+  const permOrig    = (permanent.loan_amount || 0) * (permanent.origination_pct || 0);
+
+  // Subdebt totals
+  const subdebtTotal = subdebt.reduce((s, l) => s + (l.amount || 0), 0);
+  const subdebtADS   = subdebt.reduce((s, l) => s + subdebtAnnualDS(l), 0);
+
+  // Total ADS (perm + cash-pay subdebt)
+  const totalADS = permADS + subdebtADS;
+  const totalDSCR = totalADS > 0 ? noi / totalADS : 0;
+
+  return {
+    combinedConstLoan, constOrigination, constInterestEst, leaseupInt,
+    teInt, taxInt,
+    noi, maxADS, maxLoanDSCR, dc,
+    permADS, permDSCR, permOrig,
+    subdebtTotal, subdebtADS, totalADS, totalDSCR,
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// COMPONENTS
+// ─────────────────────────────────────────────────────────────────────────────
+
+function SectionHeader({ title, subtitle, color = "#1a3a6b" }) {
   return (
-    <div style={{ padding:"8px 12px", background:"#f9f9f9", borderRadius:4, border:"1px solid #ebebeb", flex:1, minWidth:90 }}>
-      <div style={{ fontSize:9, color:"#aaa", textTransform:"uppercase", letterSpacing:"0.06em", marginBottom:4 }}>{label}</div>
-      <div style={{ fontFamily:"'DM Mono',monospace", fontSize:bold?15:12, fontWeight:bold?700:500, color }}>{value}</div>
-      {sub && <div style={{ fontSize:9, color:"#bbb", marginTop:2 }}>{sub}</div>}
+    <div style={{ display:"flex", alignItems:"baseline", gap:10, marginBottom:14,
+      paddingBottom:8, borderBottom:`2px solid ${color}` }}>
+      <div style={{ fontSize:13, fontWeight:700, color, fontFamily:"Inter, sans-serif",
+        textTransform:"uppercase", letterSpacing:"0.08em" }}>{title}</div>
+      {subtitle && <div style={{ fontSize:9, color:"#aaa", fontFamily:"Inter, sans-serif" }}>{subtitle}</div>}
     </div>
   );
 }
 
-function SectionHeader({ label, sub, action }) {
+function FieldRow({ label, note, children }) {
   return (
-    <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:14, paddingBottom:8, borderBottom:"2px solid #111" }}>
-      <div>
-        <div style={{ fontFamily:"'Playfair Display',serif", fontSize:15, fontWeight:400, color:"#111" }}>{label}</div>
-        {sub && <div style={{ fontSize:9, color:"#aaa", textTransform:"uppercase", letterSpacing:"0.07em", marginTop:2 }}>{sub}</div>}
+    <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center",
+      marginBottom:8, gap:16 }}>
+      <div style={{ flex:1 }}>
+        <div style={{ fontSize:10, color:"#444", fontFamily:"Inter, sans-serif" }}>{label}</div>
+        {note && <div style={{ fontSize:8, color:"#bbb", fontFamily:"Inter, sans-serif" }}>{note}</div>}
       </div>
-      {action}
+      <div style={{ flexShrink:0 }}>{children}</div>
     </div>
   );
 }
 
-function SourceRow({ src, onChange, onDelete, isCalc }) {
-  const [open, setOpen] = useState(false);
-  const meta = TYPE_META[src.source_type] || TYPE_META.other;
-  const ads = !meta.isConst && src.rate && src.amort_years
-    ? calcADS(src.amount, src.rate, src.amort_years) : 0;
-
+function NumInput({ value, onChange, step, min, pct, prefix, width = 110, disabled }) {
+  const display = pct ? +(value * 100).toFixed(4) : value;
   return (
-    <div style={{ border:"1px solid #e8e8e8", borderRadius:5, marginBottom:8, overflow:"hidden" }}>
-      <div style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 14px",
-        background:open?"#f8f9fc":"white", cursor:"pointer" }}
-        onClick={()=>setOpen(v=>!v)}>
-        <div style={{ width:7, height:7, borderRadius:"50%", background:"#1a3a6b", flexShrink:0 }} />
-        <div style={{ flex:1, minWidth:0 }}>
-          <div style={{ fontSize:11, fontWeight:600, color:"#111", fontFamily:"'DM Mono',monospace" }}>
-            {src.name}
-            {isCalc && <span style={{ marginLeft:6, fontSize:8, background:"#f0f3f9", color:"#1a3a6b", padding:"1px 5px", borderRadius:3, fontWeight:700 }}>CALC</span>}
-          </div>
-          {src.lender_agency && <div style={{ fontSize:9, color:"#aaa" }}>{src.lender_agency}</div>}
-        </div>
-        <div style={{ textAlign:"right", flexShrink:0 }}>
-          <div style={{ fontFamily:"'DM Mono',monospace", fontSize:12, fontWeight:700, color:"#111" }}>{fmtM(src.amount)}</div>
-          {src.rate > 0 && (
-            <div style={{ fontSize:9, color:"#888" }}>
-              {fmtPct(src.rate)}{src.amort_years ? ` · ${src.amort_years}-yr amort` : ""}
-              {src.term_years ? ` · ${src.term_years}-yr term` : ""}
-              {src.term_months ? ` · ${src.term_months}-mo const` : ""}
-            </div>
-          )}
-          {src.rate === 0 && src.source_type === "deferred_fee" && <div style={{ fontSize:9, color:"#1a6b3c" }}>0% deferred</div>}
-        </div>
-        <div style={{ fontSize:10, color:"#ccc", marginLeft:4 }}>{open?"▲":"▼"}</div>
+    <div style={{ display:"flex", alignItems:"center", gap:4 }}>
+      {prefix && <span style={{ fontSize:10, color:"#888" }}>{prefix}</span>}
+      <input
+        type="number"
+        value={display ?? ""}
+        step={step || (pct ? 0.01 : 1000)}
+        min={min}
+        disabled={disabled}
+        onChange={e => onChange(pct ? Number(e.target.value) / 100 : Number(e.target.value))}
+        style={{ background: disabled ? "#f5f5f5" : "#f8f8f8", border:"1px solid #e0e0e0",
+          borderRadius:4, padding:"4px 8px", fontSize:11, fontFamily:"Inter, sans-serif",
+          color: disabled ? "#aaa" : "#111", outline:"none", width, textAlign:"right",
+          cursor: disabled ? "not-allowed" : "auto" }}
+      />
+      {pct && <span style={{ fontSize:10, color:"#888" }}>%</span>}
+    </div>
+  );
+}
+
+function TextInput({ value, onChange, placeholder, width = "100%" }) {
+  return (
+    <input
+      value={value || ""}
+      onChange={e => onChange(e.target.value)}
+      placeholder={placeholder}
+      style={{ background:"#f8f8f8", border:"1px solid #e0e0e0", borderRadius:4,
+        padding:"4px 8px", fontSize:11, fontFamily:"Inter, sans-serif", color:"#111",
+        outline:"none", width }}
+    />
+  );
+}
+
+function Select({ value, onChange, options, width = 140 }) {
+  return (
+    <select value={value} onChange={e => onChange(e.target.value)}
+      style={{ background:"#f8f8f8", border:"1px solid #e0e0e0", borderRadius:4,
+        padding:"4px 8px", fontSize:11, fontFamily:"Inter, sans-serif", color:"#111",
+        outline:"none", width, cursor:"pointer" }}>
+      {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+    </select>
+  );
+}
+
+function CalcRow({ label, value, operator, highlight, deduction, indent }) {
+  return (
+    <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center",
+      padding:"5px 0", borderBottom:"1px solid #f5f5f5" }}>
+      <div style={{ display:"flex", alignItems:"center", gap:8,
+        paddingLeft: indent ? 20 : 0 }}>
+        {operator && (
+          <span style={{ fontSize:12, fontWeight:700, color:"#1a3a6b", width:14,
+            textAlign:"center", fontFamily:"Inter, sans-serif" }}>{operator}</span>
+        )}
+        <span style={{ fontSize:10, color:"#666", fontFamily:"Inter, sans-serif" }}>{label}</span>
       </div>
-
-      {open && (
-        <div style={{ padding:"14px 16px", borderTop:"1px solid #f0f0f0", background:"#fdfdfd" }}>
-          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:10 }}>
-            <div>
-              <label style={LABEL}>Name</label>
-              <input value={src.name} onChange={e=>onChange({name:e.target.value})} style={iStyle(false,false)} />
-            </div>
-            <div>
-              <label style={LABEL}>Lender / Agency</label>
-              <input value={src.lender_agency||""} onChange={e=>onChange({lender_agency:e.target.value})}
-                style={iStyle(false,false)} placeholder="e.g. R4 Capital, WSHFC" />
-            </div>
-          </div>
-
-          {!isCalc && (
-            <div style={{ marginBottom:10 }}>
-              <label style={LABEL}>Amount</label>
-              <input type="number" value={src.amount||""} onChange={e=>onChange({amount:Number(e.target.value)||0})} style={iStyle(false,false)} />
-            </div>
-          )}
-          {isCalc && (
-            <div style={{ marginBottom:10 }}>
-              <label style={LABEL}>Amount (engine calculated)</label>
-              <input value={fmt$(src.amount)} readOnly style={iStyle(false,true)} />
-            </div>
-          )}
-
-          {meta.isDebt && (
-            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr 1fr", gap:10 }}>
-              <div>
-                <label style={LABEL}>Rate (%/yr)</label>
-                <input type="number" step="0.001" value={src.rate ? pct(src.rate) : ""}
-                  onChange={e=>onChange({rate:Number(e.target.value)/100||0})}
-                  placeholder="e.g. 6.500" style={iStyle(false,false)} />
-              </div>
-              {meta.isConst ? (
-                <div>
-                  <label style={LABEL}>Const. Period (mo)</label>
-                  <input type="number" value={src.term_months||""} onChange={e=>onChange({term_months:Number(e.target.value)||null})}
-                    placeholder="e.g. 24" style={iStyle(false,false)} />
-                </div>
-              ) : (
-                <>
-                  <div>
-                    <label style={LABEL}>Loan Term (yrs)</label>
-                    <input type="number" value={src.term_years||""} onChange={e=>onChange({term_years:Number(e.target.value)||null})}
-                      placeholder="e.g. 10" style={iStyle(false,false)} />
-                  </div>
-                  <div>
-                    <label style={LABEL}>Amortization (yrs)</label>
-                    <input type="number" value={src.amort_years||""} onChange={e=>onChange({amort_years:Number(e.target.value)||null})}
-                      placeholder="e.g. 40" style={iStyle(false,false)} />
-                  </div>
-                </>
-              )}
-              <div>
-                <label style={LABEL}>Notes</label>
-                <input value={src.notes||""} onChange={e=>onChange({notes:e.target.value})}
-                  style={iStyle(false,false)} placeholder="Optional" />
-              </div>
-            </div>
-          )}
-
-          {ads > 0 && !meta.isConst && (
-            <div style={{ marginTop:10, padding:"8px 12px", background:"#f0f3f9", borderRadius:4,
-              fontSize:10, fontFamily:"'DM Mono',monospace", color:"#1a3a6b" }}>
-              Annual Debt Service: <strong>{fmt$(ads)}</strong> &nbsp;({fmt$(ads/12)}/mo)
-              &nbsp;·&nbsp;{src.term_years || "?"}-yr term, {src.amort_years}-yr amort
-            </div>
-          )}
-
-          {!isCalc && (
-            <div style={{ marginTop:12, textAlign:"right" }}>
-              <button onClick={onDelete}
-                style={{ background:"white", border:"1px solid #f5c2b0", color:"#8B2500",
-                  padding:"5px 12px", borderRadius:3, cursor:"pointer", fontSize:9,
-                  fontFamily:"'DM Mono',monospace", textTransform:"uppercase", letterSpacing:"0.06em" }}>
-                Remove
-              </button>
-            </div>
-          )}
-        </div>
-      )}
+      <span style={{ fontSize:11, fontWeight: highlight ? 700 : 500,
+        color: deduction ? "#8B2500" : highlight ? "#1a3a6b" : "#111",
+        fontFamily:"Inter, sans-serif" }}>
+        {value}
+      </span>
     </div>
   );
 }
 
-function SensGrid({ noi, baseRate, baseAmort, baseDSCR }) {
-  const rates   = [-0.005,-0.0025,0,0.0025,0.005].map(d=>baseRate+d);
-  const targets = [1.10,1.15,1.20,1.25,1.30];
+// Balance projection table — expandable
+function BalanceTable({ loan }) {
+  const term = loan.term_years || 15;
+  const rows = subdebtProjection(loan, term);
+  const hasPayment = ["cash_pay","io","partial"].includes(loan.payment_type);
+  const hasAccrual = ["accrual","contingent","partial"].includes(loan.payment_type);
+  const hasForgivable = loan.payment_type === "forgivable";
+
   return (
-    <div style={SECTION}>
-      <div style={STITLE}>Perm Loan Sensitivity · DSCR target (rows) × Interest rate (cols)</div>
-      <div style={{ fontSize:9, color:"#aaa", marginBottom:10 }}>NOI {fmt$(noi)} · {baseAmort}-yr amort</div>
-      <table style={{ width:"100%", borderCollapse:"collapse", fontFamily:"'DM Mono',monospace", fontSize:10 }}>
+    <div style={{ marginTop:10, overflowX:"auto" }}>
+      <table style={{ width:"100%", borderCollapse:"collapse", fontSize:10,
+        fontFamily:"Inter, sans-serif" }}>
         <thead>
-          <tr style={{ borderBottom:"2px solid #111" }}>
-            <th style={{ padding:"4px 8px", textAlign:"left", fontSize:8, color:"#888" }}>DSCR\Rate</th>
-            {rates.map(r=>(
-              <th key={r} style={{ padding:"4px 8px", textAlign:"right", fontSize:8,
-                color:Math.abs(r-baseRate)<0.0001?"#1a3a6b":"#888",
-                fontWeight:Math.abs(r-baseRate)<0.0001?700:400 }}>{(r*100).toFixed(2)}%</th>
-            ))}
+          <tr style={{ background:"#f5f5f5", borderBottom:"1px solid #e0e0e0" }}>
+            <th style={{ padding:"4px 8px", textAlign:"right", color:"#888", fontWeight:700,
+              fontSize:8, textTransform:"uppercase", letterSpacing:"0.06em" }}>Year</th>
+            <th style={{ padding:"4px 8px", textAlign:"right", color:"#888", fontWeight:700,
+              fontSize:8, textTransform:"uppercase", letterSpacing:"0.06em" }}>Open Bal</th>
+            <th style={{ padding:"4px 8px", textAlign:"right", color:"#888", fontWeight:700,
+              fontSize:8, textTransform:"uppercase", letterSpacing:"0.06em" }}>Interest</th>
+            {hasPayment && <th style={{ padding:"4px 8px", textAlign:"right", color:"#888",
+              fontWeight:700, fontSize:8, textTransform:"uppercase", letterSpacing:"0.06em" }}>Payment</th>}
+            {hasAccrual && <th style={{ padding:"4px 8px", textAlign:"right", color:"#8B2500",
+              fontWeight:700, fontSize:8, textTransform:"uppercase", letterSpacing:"0.06em" }}>Accrual</th>}
+            {hasForgivable && <th style={{ padding:"4px 8px", textAlign:"right", color:"#1a6b3c",
+              fontWeight:700, fontSize:8, textTransform:"uppercase", letterSpacing:"0.06em" }}>Forgiven</th>}
+            <th style={{ padding:"4px 8px", textAlign:"right", color:"#111", fontWeight:700,
+              fontSize:8, textTransform:"uppercase", letterSpacing:"0.06em" }}>Close Bal</th>
           </tr>
         </thead>
         <tbody>
-          {targets.map(dscr=>(
-            <tr key={dscr} style={{ borderBottom:"1px solid #f5f5f5" }}>
-              <td style={{ padding:"4px 8px", fontSize:10,
-                color:Math.abs(dscr-baseDSCR)<0.001?"#1a3a6b":"#666",
-                fontWeight:Math.abs(dscr-baseDSCR)<0.001?700:400 }}>{fmtX(dscr)}</td>
-              {rates.map(r=>{
-                const loan=calcLoanFromDSCR(noi,dscr,r,baseAmort);
-                const isBase=Math.abs(r-baseRate)<0.0001&&Math.abs(dscr-baseDSCR)<0.001;
-                return <td key={r} style={{ padding:"4px 8px", textAlign:"right",
-                  background:isBase?"#f0f3f9":"transparent", fontWeight:isBase?700:400,
-                  color:isBase?"#1a3a6b":"#111" }}>{fmtM(loan)}</td>;
-              })}
+          {rows.map((r, i) => (
+            <tr key={r.year} style={{ background: i % 2 === 0 ? "white" : "#fafafa",
+              borderBottom:"1px solid #f5f5f5" }}>
+              <td style={{ padding:"3px 8px", textAlign:"right", color:"#888" }}>{r.year}</td>
+              <td style={{ padding:"3px 8px", textAlign:"right" }}>{fmt$(r.openBal)}</td>
+              <td style={{ padding:"3px 8px", textAlign:"right", color:"#666" }}>{fmt$(r.interest)}</td>
+              {hasPayment && <td style={{ padding:"3px 8px", textAlign:"right",
+                color:"#1a3a6b" }}>{fmt$(r.payment)}</td>}
+              {hasAccrual && <td style={{ padding:"3px 8px", textAlign:"right",
+                color: r.accrual > 0 ? "#8B2500" : "#aaa" }}>{fmt$(r.accrual)}</td>}
+              {hasForgivable && <td style={{ padding:"3px 8px", textAlign:"right",
+                color:"#1a6b3c" }}>{fmt$(r.forgiven)}</td>}
+              <td style={{ padding:"3px 8px", textAlign:"right", fontWeight:600,
+                color: r.closeBal > r.openBal ? "#8B2500" : "#111" }}>{fmt$(r.closeBal)}</td>
             </tr>
           ))}
         </tbody>
-      </table>
-    </div>
-  );
-}
-
-function AmortSchedule({ principal, rate, amortYears, termYears, noi }) {
-  const snapYears = [1,3,5,7,10,15,20,amortYears].filter((v,i,a)=>v<=amortYears&&a.indexOf(v)===i).sort((a,b)=>a-b);
-  const ads = calcADS(principal, rate, amortYears);
-  return (
-    <div style={SECTION}>
-      <div style={STITLE}>Amortization Schedule</div>
-      <table style={{ width:"100%", borderCollapse:"collapse", fontFamily:"'DM Mono',monospace", fontSize:10 }}>
-        <thead>
-          <tr style={{ borderBottom:"2px solid #111" }}>
-            {["Year","Balance","DSCR","Annual Interest"].map(h=>(
-              <th key={h} style={{ padding:"5px 10px", textAlign:"right", fontSize:8, color:"#888", textTransform:"uppercase" }}>{h}</th>
-            ))}
+        <tfoot>
+          <tr style={{ borderTop:"2px solid #111", background:"#f8f8f8" }}>
+            <td colSpan={2} style={{ padding:"4px 8px", fontSize:9, fontWeight:700,
+              color:"#888", textTransform:"uppercase" }}>MATURITY BALANCE</td>
+            <td colSpan={99} style={{ padding:"4px 8px", textAlign:"right", fontWeight:700,
+              fontSize:12, color: rows[rows.length-1]?.closeBal > (loan.amount||0) ? "#8B2500" : "#1a3a6b" }}>
+              {fmt$(rows[rows.length-1]?.closeBal)}
+            </td>
           </tr>
-        </thead>
-        <tbody>
-          {snapYears.map(yr=>{
-            const bal=calcBalanceAtYear(principal,rate,amortYears,yr);
-            const prevBal=yr===1?principal:calcBalanceAtYear(principal,rate,amortYears,yr-1);
-            const intPaid=(prevBal+bal)/2*rate;
-            const dscr=ads>0?noi/ads:0;
-            const isTerm=termYears&&yr===Number(termYears);
-            return (
-              <tr key={yr} style={{ borderBottom:"1px solid #f5f5f5", background:isTerm?"#fffbe6":"transparent" }}>
-                <td style={{ padding:"4px 10px", textAlign:"right", color:"#aaa", fontWeight:700 }}>
-                  Yr {yr}{isTerm?<span style={{ fontSize:8, color:"#5a3a00", marginLeft:4 }}>← maturity</span>:null}
-                </td>
-                <td style={{ padding:"4px 10px", textAlign:"right" }}>{fmtM(bal)}</td>
-                <td style={{ padding:"4px 10px", textAlign:"right", fontWeight:700,
-                  color:dscr>=1.20?"#1a6b3c":dscr>=1.15?"#5a3a00":"#8B2500" }}>{fmtX(dscr)}</td>
-                <td style={{ padding:"4px 10px", textAlign:"right", color:"#8B2500" }}>{fmt$(intPaid)}</td>
-              </tr>
-            );
-          })}
-        </tbody>
+        </tfoot>
       </table>
+      {loan.compound_accrual && (
+        <div style={{ fontSize:8, color:"#aaa", marginTop:4, fontFamily:"Inter, sans-serif" }}>
+          Compound accrual — interest accrues on running balance
+        </div>
+      )}
+      {!loan.compound_accrual && loan.payment_type === "accrual" && (
+        <div style={{ fontSize:8, color:"#aaa", marginTop:4, fontFamily:"Inter, sans-serif" }}>
+          Simple accrual — interest accrues on original principal only
+        </div>
+      )}
     </div>
   );
 }
 
-export default function DebtTab({ scenario, baseFA, onFAUpdate }) {
-  const [sources,    setSources]    = useState([]);
-  const [saving,     setSaving]     = useState(false);
-  const [dscrTarget, setDscrTarget] = useState(1.20);
-  const [showGrid,   setShowGrid]   = useState(true);
-  const [showAmort,  setShowAmort]  = useState(false);
-  const [loading,    setLoading]    = useState(true);
+// Single subdebt card — draggable
+function SubdebtCard({ loan, onUpdate, onRemove, dragHandleProps, isDragging }) {
+  const [expanded, setExpanded] = useState(false);
+  const color = LOAN_TYPE_COLORS[loan.loan_type] || "#444";
+  const annualCashDS = subdebtAnnualDS(loan);
+  const projection = subdebtProjection(loan, loan.term_years || 15);
+  const maturityBal = projection[projection.length - 1]?.closeBal ?? loan.amount;
+  const grows = maturityBal > (loan.amount || 0);
 
-  useEffect(() => {
-    if (!scenario?.id) { setLoading(false); return; }
-    setLoading(true);
-    fetchScenarioSources(scenario.id)
-      .then(d => { setSources(d); setLoading(false); })
-      .catch(() => setLoading(false));
-  }, [scenario?.id]);
+  const inpStyle = { background:"#f8f8f8", border:"1px solid #e0e0e0", borderRadius:3,
+    padding:"3px 6px", fontSize:10, fontFamily:"Inter, sans-serif", color:"#111",
+    outline:"none", textAlign:"right" };
 
-  useEffect(() => {
-    if (baseFA?.dscr_target) setDscrTarget(baseFA.dscr_target);
-  }, [baseFA?.dscr_target]);
+  return (
+    <div style={{ background:"white", border:`1px solid ${isDragging ? color : "#e0e0e0"}`,
+      borderLeft:`3px solid ${color}`, borderRadius:6, marginBottom:8,
+      opacity: isDragging ? 0.8 : 1, boxShadow: isDragging ? "0 4px 12px rgba(0,0,0,0.15)" : "none" }}>
 
-  const constSources = sources.filter(s=>s.source_type==="const_loan_te"||s.source_type==="const_loan_taxable");
-  const permSource   = sources.find(s=>s.source_type==="perm_loan");
-  const equitySrc    = sources.find(s=>s.source_type==="lihtc_equity");
-  const deferredSrc  = sources.find(s=>s.source_type==="deferred_fee");
-  const subDebtSrcs  = sources.filter(s=>s.source_type==="sub_debt"||s.source_type==="grant"||s.source_type==="other");
+      {/* Card header */}
+      <div style={{ display:"flex", alignItems:"center", gap:8, padding:"10px 12px",
+        cursor:"pointer" }} onClick={() => setExpanded(v => !v)}>
 
-  const noi = useMemo(() => {
-    if (!baseFA) return 0;
-    return Math.round(
-      ((baseFA.base_residential_rev||0)+(baseFA.total_other_income||0))
-      *(1-(baseFA.vacancy_rate||0.06))-(baseFA.opex_y1||0)
-    );
-  }, [baseFA]);
+        {/* Drag handle */}
+        <div {...dragHandleProps}
+          onClick={e => e.stopPropagation()}
+          style={{ cursor:"grab", color:"#ccc", fontSize:14, padding:"0 4px",
+            userSelect:"none", flexShrink:0 }}
+          title="Drag to reorder priority">
+          ⠿
+        </div>
 
-  const permLoan  = permSource?.amount     || 0;
-  const permRate  = permSource?.rate       || 0.0585;
-  const permAmort = permSource?.amort_years|| 40;
-  const permTerm  = permSource?.term_years || 10;
-  const dscrSized = calcLoanFromDSCR(noi, dscrTarget, permRate, permAmort);
-  const ads       = calcADS(permLoan, permRate, permAmort);
-  const dscr      = ads > 0 ? noi/ads : 0;
-  const dscrOk    = dscr >= dscrTarget;
+        {/* Priority badge */}
+        <div style={{ width:20, height:20, borderRadius:"50%", background:color,
+          color:"white", fontSize:10, fontWeight:700, display:"flex", alignItems:"center",
+          justifyContent:"center", flexShrink:0 }}>
+          {loan.priority}
+        </div>
 
-  const saveSource = useCallback(async (src) => {
-    if (!scenario?.id) return;
-    setSaving(true);
-    try {
-      const updated = await upsertScenarioSource(scenario.id, src);
-      setSources(prev=>prev.map(s=>s.id===updated.id?updated:s));
-    } catch(e) { console.error(e); }
-    finally { setSaving(false); }
-  }, [scenario?.id]);
+        {/* Lender name — editable inline */}
+        <input
+          value={loan.label}
+          onChange={e => { e.stopPropagation(); onUpdate({ label: e.target.value }); }}
+          onClick={e => e.stopPropagation()}
+          style={{ flex:1, background:"transparent", border:"none", outline:"none",
+            fontSize:12, fontWeight:700, fontFamily:"Inter, sans-serif", color:"#111" }}
+        />
 
-  const updateAndSave = (id, fields) => {
-    setSources(prev=>prev.map(s=>s.id===id?{...s,...fields}:s));
-    const src = sources.find(s=>s.id===id);
-    if (src) saveSource({...src,...fields});
+        {/* Summary chips */}
+        <div style={{ display:"flex", gap:6, alignItems:"center", flexShrink:0 }}>
+          <span style={{ fontSize:10, fontWeight:600, color:"#111" }}>{fmt$(loan.amount)}</span>
+          <span style={{ fontSize:9, background:"#f5f5f5", border:"1px solid #e0e0e0",
+            borderRadius:3, padding:"1px 5px", color:"#666" }}>
+            {PAYMENT_TYPE_OPTIONS.find(o => o.value === loan.payment_type)?.label || loan.payment_type}
+          </span>
+          {grows && (
+            <span style={{ fontSize:9, color:"#8B2500", background:"#fce8e3",
+              border:"1px solid #f5c2b0", borderRadius:3, padding:"1px 5px" }}>
+              Grows → {fmt$(maturityBal)}
+            </span>
+          )}
+          {annualCashDS > 0 && (
+            <span style={{ fontSize:9, color:"#1a6b3c", background:"#f0f9f4",
+              border:"1px solid #b8dfc8", borderRadius:3, padding:"1px 5px" }}>
+              DS: {fmt$(annualCashDS)}/yr
+            </span>
+          )}
+        </div>
+
+        <span style={{ color:"#aaa", fontSize:10, flexShrink:0 }}>{expanded ? "▲" : "▼"}</span>
+        <button onClick={e => { e.stopPropagation(); onRemove(); }}
+          style={{ background:"none", border:"none", cursor:"pointer", color:"#ddd",
+            fontSize:12, padding:"0 4px", flexShrink:0 }}
+          onMouseEnter={e => e.target.style.color="#8B2500"}
+          onMouseLeave={e => e.target.style.color="#ddd"}>✕</button>
+      </div>
+
+      {/* Expanded detail */}
+      {expanded && (
+        <div style={{ padding:"0 12px 12px 12px", borderTop:"1px solid #f5f5f5" }}>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10, marginTop:10 }}>
+
+            {/* Column 1 — Loan terms */}
+            <div>
+              <div style={{ fontSize:8, fontWeight:700, color:"#888", textTransform:"uppercase",
+                letterSpacing:"0.06em", marginBottom:6 }}>Loan Terms</div>
+              <div style={{ display:"flex", flexDirection:"column", gap:5 }}>
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                  <span style={{ fontSize:9, color:"#666" }}>Type</span>
+                  <Select value={loan.loan_type} onChange={v => onUpdate({ loan_type: v })}
+                    options={LOAN_TYPE_OPTIONS} width={110} />
+                </div>
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                  <span style={{ fontSize:9, color:"#666" }}>Amount</span>
+                  <input type="number" value={loan.amount || ""} step={10000}
+                    onChange={e => onUpdate({ amount: Number(e.target.value) })}
+                    style={{ ...inpStyle, width:110 }} />
+                </div>
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                  <span style={{ fontSize:9, color:"#666" }}>Rate</span>
+                  <div style={{ display:"flex", alignItems:"center", gap:3 }}>
+                    <input type="number" value={+(loan.rate * 100).toFixed(4)} step={0.01}
+                      onChange={e => onUpdate({ rate: Number(e.target.value) / 100 })}
+                      style={{ ...inpStyle, width:70 }} />
+                    <span style={{ fontSize:9, color:"#888" }}>%</span>
+                  </div>
+                </div>
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                  <span style={{ fontSize:9, color:"#666" }}>Term (years)</span>
+                  <input type="number" value={loan.term_years || ""} step={1}
+                    onChange={e => onUpdate({ term_years: Number(e.target.value) })}
+                    style={{ ...inpStyle, width:60 }} />
+                </div>
+              </div>
+            </div>
+
+            {/* Column 2 — Payment structure */}
+            <div>
+              <div style={{ fontSize:8, fontWeight:700, color:"#888", textTransform:"uppercase",
+                letterSpacing:"0.06em", marginBottom:6 }}>Payment Structure</div>
+              <div style={{ display:"flex", flexDirection:"column", gap:5 }}>
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                  <span style={{ fontSize:9, color:"#666" }}>Payment Type</span>
+                  <Select value={loan.payment_type} onChange={v => onUpdate({ payment_type: v })}
+                    options={PAYMENT_TYPE_OPTIONS} width={140} />
+                </div>
+                {loan.payment_type === "partial" && (
+                  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                    <span style={{ fontSize:9, color:"#666" }}>Annual Cash Pay</span>
+                    <input type="number" value={loan.cash_pay_annual || ""} step={1000}
+                      onChange={e => onUpdate({ cash_pay_annual: Number(e.target.value) })}
+                      style={{ ...inpStyle, width:110 }} />
+                  </div>
+                )}
+                {loan.payment_type === "forgivable" && (
+                  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                    <span style={{ fontSize:9, color:"#666" }}>Forgive % / Year</span>
+                    <div style={{ display:"flex", alignItems:"center", gap:3 }}>
+                      <input type="number" value={loan.forgive_pct_per_year || ""} step={1}
+                        onChange={e => onUpdate({ forgive_pct_per_year: Number(e.target.value) })}
+                        style={{ ...inpStyle, width:60 }} />
+                      <span style={{ fontSize:9, color:"#888" }}>%</span>
+                    </div>
+                  </div>
+                )}
+                {(loan.payment_type === "accrual" || loan.payment_type === "partial") && (
+                  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                    <span style={{ fontSize:9, color:"#666" }}>Compound accrual?</span>
+                    <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+                      <input type="checkbox" checked={loan.compound_accrual || false}
+                        onChange={e => onUpdate({ compound_accrual: e.target.checked })}
+                        style={{ cursor:"pointer", accentColor:color }} />
+                      <span style={{ fontSize:8, color:"#aaa" }}>
+                        {loan.compound_accrual ? "Compound" : "Simple"}
+                      </span>
+                    </div>
+                  </div>
+                )}
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                  <span style={{ fontSize:9, color:"#666" }}>Count in ADS?</span>
+                  <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+                    <input type="checkbox" checked={loan.in_ads || false}
+                      onChange={e => onUpdate({ in_ads: e.target.checked })}
+                      style={{ cursor:"pointer", accentColor:"#1a3a6b" }} />
+                    <span style={{ fontSize:8, color:"#aaa" }}>
+                      {loan.in_ads ? "Yes — in DSCR" : "No — excluded from DSCR"}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Column 3 — Notes + at maturity */}
+            <div>
+              <div style={{ fontSize:8, fontWeight:700, color:"#888", textTransform:"uppercase",
+                letterSpacing:"0.06em", marginBottom:6 }}>At Maturity / Notes</div>
+              <div style={{ background: grows ? "#fce8e3" : "#f0f9f4",
+                border:`1px solid ${grows ? "#f5c2b0" : "#b8dfc8"}`,
+                borderRadius:4, padding:"8px 10px", marginBottom:8 }}>
+                <div style={{ fontSize:8, color:"#888", marginBottom:2 }}>Balance at Maturity</div>
+                <div style={{ fontSize:14, fontWeight:700,
+                  color: grows ? "#8B2500" : "#1a6b3c" }}>{fmt$(maturityBal)}</div>
+                {grows && (
+                  <div style={{ fontSize:8, color:"#8B2500", marginTop:2 }}>
+                    +{fmt$(maturityBal - (loan.amount || 0))} accrued
+                  </div>
+                )}
+              </div>
+              <textarea value={loan.notes || ""}
+                onChange={e => onUpdate({ notes: e.target.value })}
+                placeholder="Notes (priority, terms, conditions...)"
+                rows={3}
+                style={{ width:"100%", background:"#fafafa", border:"1px solid #e8e8e8",
+                  borderRadius:4, padding:"6px 8px", fontSize:9, fontFamily:"Inter, sans-serif",
+                  color:"#666", resize:"vertical", outline:"none", boxSizing:"border-box" }} />
+            </div>
+          </div>
+
+          {/* Balance table */}
+          <div>
+            <div style={{ fontSize:9, fontWeight:700, color:"#888", textTransform:"uppercase",
+              letterSpacing:"0.06em", marginTop:10, marginBottom:4 }}>
+              Balance Projection — {loan.term_years || 15} Years
+            </div>
+            <BalanceTable loan={loan} />
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Draggable subdebt list — manual drag with refs
+function SubdebtList({ loans, onUpdate, onRemove, onReorder }) {
+  const dragIdx = useRef(null);
+  const dragOverIdx = useRef(null);
+
+  const handleDragStart = (idx) => { dragIdx.current = idx; };
+  const handleDragEnter = (idx) => { dragOverIdx.current = idx; };
+  const handleDragEnd   = () => {
+    if (dragIdx.current === null || dragOverIdx.current === null) return;
+    if (dragIdx.current === dragOverIdx.current) return;
+    const reordered = [...loans];
+    const [moved] = reordered.splice(dragIdx.current, 1);
+    reordered.splice(dragOverIdx.current, 0, moved);
+    // Re-assign priorities
+    const withPriority = reordered.map((l, i) => ({ ...l, priority: i + 1 }));
+    onReorder(withPriority);
+    dragIdx.current = null;
+    dragOverIdx.current = null;
   };
-
-  const saveDscrTarget = async (val) => {
-    setDscrTarget(val);
-    if (!scenario?.project_id) return;
-    try {
-      const updated = await upsertFinancialAssumptions(scenario.project_id, { dscr_target: val });
-      onFAUpdate?.(updated);
-    } catch(e) { console.error(e); }
-  };
-
-  const addSubDebt = async () => {
-    try {
-      const saved = await upsertScenarioSource(scenario.id, {
-        name:"New Soft Source", source_type:"sub_debt", is_calculated:false,
-        amount:0, rate:0, sort_order:sources.length+1,
-      });
-      setSources(prev=>[...prev,saved]);
-    } catch(e) { console.error(e); }
-  };
-
-  const removeSource = async (id) => {
-    await deleteScenarioSource(id);
-    setSources(prev=>prev.filter(s=>s.id!==id));
-  };
-
-  if (loading) return <div style={{ padding:40, color:"#888", fontSize:12 }}>Loading…</div>;
-  if (!scenario?.id) return <div style={{ padding:40, color:"#aaa", fontSize:12 }}>Select a project to view debt sources.</div>;
 
   return (
     <div>
-      <div style={{ display:"flex", alignItems:"baseline", justifyContent:"space-between", marginBottom:20 }}>
+      {loans.map((loan, idx) => (
+        <div key={loan.id}
+          draggable
+          onDragStart={() => handleDragStart(idx)}
+          onDragEnter={() => handleDragEnter(idx)}
+          onDragEnd={handleDragEnd}
+          onDragOver={e => e.preventDefault()}>
+          <SubdebtCard
+            loan={loan}
+            onUpdate={patch => onUpdate(loan.id, patch)}
+            onRemove={() => onRemove(loan.id)}
+            dragHandleProps={{}}
+            isDragging={false}
+          />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// Sources & Uses summary card
+function SourcesUsesSummary({ calcs, permanent, construction, subdebt, otherSources,
+  lihtcEquity, stateEquity, deferredDevFee, tdc }) {
+
+  const permLoan    = permanent.loan_amount || 0;
+  const subdebtTot  = subdebt.reduce((s, l) => s + (l.amount || 0), 0);
+  const otherTot    = otherSources.reduce((s, l) => s + (l.amount || 0), 0);
+  const fedEquity   = lihtcEquity || 0;
+  const stEquity    = stateEquity || 0;
+  const ddf         = deferredDevFee || 0;
+
+  const totalSources = permLoan + subdebtTot + otherTot + fedEquity + stEquity + ddf;
+  const gap          = totalSources - (tdc || 0);
+  const gapPct       = tdc > 0 ? gap / tdc : 0;
+
+  const sources = [
+    { label:"Permanent Loan",          amount: permLoan,   color:"#1a3a6b" },
+    { label:"Subordinate Debt",        amount: subdebtTot, color:"#5a3a00" },
+    { label:"Federal LIHTC Equity",    amount: fedEquity,  color:"#1a6b3c" },
+    { label:"State LIHTC Equity",      amount: stEquity,   color:"#2a8a50" },
+    { label:"Other Sources / Grants",  amount: otherTot,   color:"#4a1a6b" },
+    { label:"Deferred Developer Fee",  amount: ddf,        color:"#444"    },
+  ].filter(s => s.amount > 0);
+
+  return (
+    <div style={{ background:"#111", borderRadius:8, padding:"16px 20px" }}>
+      <div style={{ fontSize:9, fontWeight:700, color:"#888", textTransform:"uppercase",
+        letterSpacing:"0.08em", marginBottom:14 }}>Sources vs. Uses Summary</div>
+
+      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:20 }}>
+        {/* Sources */}
         <div>
-          <h2 style={{ fontFamily:"'Playfair Display',serif", fontSize:20, fontWeight:400, color:"#111", margin:0 }}>Debt</h2>
-          <div style={{ fontSize:9, color:"#aaa", letterSpacing:"0.08em", textTransform:"uppercase", marginTop:3 }}>CONSTRUCTION · PERMANENT · SOFT SOURCES</div>
-        </div>
-        <div style={{ display:"flex", gap:6, alignItems:"center" }}>
-          {saving && <span style={{ fontSize:9, color:"#aaa" }}>saving…</span>}
-          <button onClick={()=>setShowGrid(v=>!v)}
-            style={{ background:"white", border:"1px solid #e0e0e0", color:"#666", padding:"5px 11px", borderRadius:3, cursor:"pointer", fontSize:9, textTransform:"uppercase", fontFamily:"'DM Mono',monospace" }}>
-            {showGrid?"Hide Grid":"Sensitivity"}
-          </button>
-          <button onClick={()=>setShowAmort(v=>!v)}
-            style={{ background:"white", border:"1px solid #e0e0e0", color:"#666", padding:"5px 11px", borderRadius:3, cursor:"pointer", fontSize:9, textTransform:"uppercase", fontFamily:"'DM Mono',monospace" }}>
-            {showAmort?"Hide Schedule":"Amort Schedule"}
-          </button>
-        </div>
-      </div>
-
-      {/* 1. Construction Debt */}
-      <div style={SECTION}>
-        <SectionHeader label="Construction Debt" sub="Interest-only during construction period" />
-        {constSources.length===0 && <div style={{ color:"#bbb", fontSize:11, padding:"10px 0" }}>No construction loan sources.</div>}
-        {constSources.map(src=>(
-          <SourceRow key={src.id} src={src} isCalc={src.is_calculated}
-            onChange={fields=>updateAndSave(src.id,fields)}
-            onDelete={()=>removeSource(src.id)} />
-        ))}
-        <div style={{ fontSize:9, color:"#aaa", marginTop:4, padding:"6px 10px", background:"#f9f9f9", borderRadius:4 }}>
-          Construction loan amounts are engine-calculated (LTC × TDC). Edit rate and term above.
-        </div>
-      </div>
-
-      {/* 2. Permanent Debt */}
-      <div style={SECTION}>
-        <SectionHeader label="Permanent Debt"
-          sub={`NOI ${fmt$(noi)}`}
-          action={
-            <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-              <span style={{ fontSize:9, color:"#666", textTransform:"uppercase", letterSpacing:"0.06em" }}>Target DSCR</span>
-              <input type="number" step="0.01" value={dscrTarget}
-                onChange={e=>saveDscrTarget(Number(e.target.value)||1.20)}
-                style={{ width:68, padding:"4px 8px", border:"1px solid #e0e0e0", borderRadius:3,
-                  fontFamily:"'DM Mono',monospace", fontSize:12, fontWeight:700, color:"#1a3a6b", textAlign:"center", outline:"none" }} />
-              <span style={{ fontSize:9, color:"#888" }}>→ sizes to {fmtM(dscrSized)}</span>
+          <div style={{ fontSize:8, color:"#666", textTransform:"uppercase", letterSpacing:"0.06em",
+            marginBottom:8 }}>Sources</div>
+          {sources.map(s => (
+            <div key={s.label} style={{ display:"flex", justifyContent:"space-between",
+              marginBottom:5, alignItems:"center" }}>
+              <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+                <div style={{ width:6, height:6, borderRadius:1, background:s.color }} />
+                <span style={{ fontSize:10, color:"#ccc" }}>{s.label}</span>
+              </div>
+              <span style={{ fontSize:10, fontWeight:600, color:"white" }}>{fmt$(s.amount)}</span>
             </div>
-          }
-        />
-
-        <div style={{ display:"flex", gap:8, marginBottom:14, flexWrap:"wrap" }}>
-          <Metric label="Perm Loan" value={fmtM(permLoan)} bold />
-          <Metric label="Annual Debt Service" value={fmt$(ads)} sub={fmt$(ads/12)+"/mo"} />
-          <Metric label="DSCR" value={fmtX(dscr)} ok={dscrOk} bold
-            sub={dscrOk?"Meets target":"Below target — reduce loan or increase NOI"} />
-          <Metric label="Sized @ Target" value={fmtM(dscrSized)} sub={`${fmtPct(dscrTarget)} DSCR`} />
-          <Metric label="Debt Yield" value={permLoan>0?`${((noi/permLoan)*100).toFixed(2)}%`:"—"}
-            ok={permLoan>0&&noi/permLoan>=0.07} sub="NOI ÷ Loan" />
+          ))}
+          <div style={{ borderTop:"1px solid #333", marginTop:8, paddingTop:8,
+            display:"flex", justifyContent:"space-between" }}>
+            <span style={{ fontSize:10, fontWeight:700, color:"#888" }}>TOTAL SOURCES</span>
+            <span style={{ fontSize:12, fontWeight:700, color:"white" }}>{fmt$(totalSources)}</span>
+          </div>
         </div>
 
-        {permSource ? (
-          <SourceRow src={permSource} isCalc={permSource.is_calculated}
-            onChange={fields=>updateAndSave(permSource.id,fields)}
-            onDelete={()=>removeSource(permSource.id)} />
+        {/* Uses + Gap */}
+        <div>
+          <div style={{ fontSize:8, color:"#666", textTransform:"uppercase", letterSpacing:"0.06em",
+            marginBottom:8 }}>Uses</div>
+          <div style={{ display:"flex", justifyContent:"space-between", marginBottom:5 }}>
+            <span style={{ fontSize:10, color:"#ccc" }}>Total Dev Cost</span>
+            <span style={{ fontSize:10, fontWeight:600, color:"white" }}>{fmt$(tdc)}</span>
+          </div>
+          <div style={{ borderTop:"1px solid #333", marginTop:20, paddingTop:12 }}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+              <span style={{ fontSize:11, fontWeight:700,
+                color: gap >= 0 ? "#4ade80" : "#f87171" }}>
+                {gap >= 0 ? "SURPLUS" : "GAP"}
+              </span>
+              <span style={{ fontSize:18, fontWeight:700,
+                color: gap >= 0 ? "#4ade80" : "#f87171" }}>
+                {gap >= 0 ? "+" : ""}{fmt$(gap)}
+              </span>
+            </div>
+            <div style={{ fontSize:9, color:"#555", marginTop:2 }}>
+              {(gapPct * 100).toFixed(2)}% of TDC
+            </div>
+          </div>
+
+          {/* DSCR summary */}
+          <div style={{ marginTop:14, paddingTop:12, borderTop:"1px solid #333" }}>
+            <div style={{ fontSize:8, color:"#666", textTransform:"uppercase", letterSpacing:"0.06em",
+              marginBottom:6 }}>Debt Coverage</div>
+            {[
+              { label:"NOI",            value: fmt$(calcs.noi) },
+              { label:"Perm ADS",       value: fmt$(calcs.permADS) },
+              { label:"Senior DSCR",    value: fmtX(calcs.permDSCR) },
+              { label:"Total ADS",      value: fmt$(calcs.totalADS) },
+              { label:"Total DSCR",     value: fmtX(calcs.totalDSCR) },
+            ].map(r => (
+              <div key={r.label} style={{ display:"flex", justifyContent:"space-between",
+                marginBottom:3 }}>
+                <span style={{ fontSize:9, color:"#888" }}>{r.label}</span>
+                <span style={{ fontSize:9, fontWeight:600,
+                  color: r.label.includes("DSCR") && parseFloat(r.value) < 1.15
+                    ? "#f87171" : "white" }}>{r.value}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MAIN PANEL
+// ─────────────────────────────────────────────────────────────────────────────
+export default function DebtPanel() {
+  const { moduleStates, updateModule } = useLihtc();
+
+  const construction  = { ...DEFAULT_CONSTRUCTION,  ...moduleStates.debt?.construction  };
+  const permanent     = { ...DEFAULT_PERMANENT,      ...moduleStates.debt?.permanent     };
+  const subdebt       = moduleStates.debt?.subdebt       ?? DEFAULT_SUBDEBT;
+  const otherSources  = moduleStates.debt?.other_sources ?? DEFAULT_OTHER_SOURCES;
+
+  // Read from other modules
+  const lihtcState    = moduleStates.lihtc || {};
+  const lihtcEquity   = null; // will read from Module 3 calcs — wired in next session
+  const stateEquity   = null;
+
+  // TDC from budget module
+  const budget = moduleStates.budget;
+  const unitMix = moduleStates.unit_mix;
+  const totalUnits = (unitMix?.rows ?? []).reduce((s, r) => s + (r.count || 0), 0) || 175;
+
+  // Lightweight TDC calc (mirrors DevBudget)
+  let tdc = 67824621, deferredDevFee = 5927282;
+  if (budget?.sections && budget?.assumptions) {
+    const a = budget.assumptions;
+    const s = budget.sections;
+    const hcAll    = s.hard_costs?.filter(l => l.type==="input").reduce((sum,l)=>sum+(l.amount||0),0)||0;
+    const ppBond   = s.hard_costs?.find(l=>l.label?.toLowerCase().includes("p&p")||l.label?.toLowerCase().includes("bond premium"));
+    const ppAmt    = ppBond?.type==="input"?(ppBond?.amount||0):0;
+    const hcBase   = hcAll - ppAmt;
+    const hcCont   = hcBase*(a.hc_contingency_pct||0);
+    const hcTax    = (hcBase+hcCont)*(a.sales_tax_pct||0);
+    const hcTotal  = hcAll+hcCont+hcTax;
+    const scAll    = s.soft_costs?.filter(l=>l.type==="input").reduce((sum,l)=>sum+(l.amount||0),0)||0;
+    const scTotal  = scAll+(scAll*(a.sc_contingency_pct||0));
+    const finAll   = s.financing?.filter(l=>l.type==="input").reduce((sum,l)=>sum+(l.amount||0),0)||0;
+    const combCL   = (a.const_loan_amount||0)+(a.taxable_loan_amount||0);
+    const finTotal = finAll+(combCL*(a.const_origination_pct||0))+((a.perm_loan_amount||0)*(a.perm_origination_pct||0))+(a.const_interest_est||0)+(a.leaseup_interest_est||0);
+    const orgAll   = s.org_reserves?.filter(l=>l.type==="input").reduce((sum,l)=>sum+(l.amount||0),0)||0;
+    const orgTotal = orgAll+(totalUnits*(a.rep_reserve_per_unit??350))+(a.op_reserve_fallback??637500)+(a.ads_reserve_fallback??1110159);
+    const acqTotal = s.acquisition?.reduce((sum,l)=>sum+(l.amount||0),0)||4488000;
+    const subtotal = acqTotal+hcTotal+scTotal+finTotal+orgTotal;
+    tdc = subtotal+(subtotal*(a.dev_fee_pct||0.15));
+    deferredDevFee = subtotal*(a.dev_fee_pct||0.15)*(1-(a.cash_fee_pct||0.33));
+  }
+
+  const calcs = computeDebt(construction, permanent, subdebt, null, null);
+
+  // Writers
+  const updateConstruction = p => updateModule("debt", { construction: { ...construction, ...p } });
+  const updatePermanent    = p => updateModule("debt", { permanent:    { ...permanent,    ...p } });
+  const updateSubdebt      = (id, p) => updateModule("debt", { subdebt: subdebt.map(l => l.id===id ? {...l,...p} : l) });
+  const removeSubdebt      = id => updateModule("debt", { subdebt: subdebt.filter(l => l.id!==id).map((l,i)=>({...l,priority:i+1})) });
+  const reorderSubdebt     = newList => updateModule("debt", { subdebt: newList });
+  const addSubdebt         = () => updateModule("debt", { subdebt: [...subdebt, {
+    id: mkId(), label: "New Loan", priority: subdebt.length + 1,
+    loan_type:"soft", amount:0, rate:0, term_years:15,
+    payment_type:"accrual", cash_pay_annual:0, compound_accrual:false,
+    forgive_pct_per_year:0, in_ads:false, notes:"",
+  }]});
+  const updateOtherSource  = (id, p) => updateModule("debt", { other_sources: otherSources.map(s => s.id===id ? {...s,...p} : s) });
+
+  return (
+    <div style={{ fontFamily:"Inter, sans-serif" }}>
+      {/* Header */}
+      <div style={{ display:"flex", alignItems:"baseline", justifyContent:"space-between", marginBottom:20 }}>
+        <div style={{ display:"flex", alignItems:"baseline", gap:10 }}>
+          <h2 style={{ fontFamily:"'Playfair Display', serif", fontSize:20, fontWeight:400, color:"#111" }}>
+            Debt Stack
+          </h2>
+          <span style={{ fontSize:9, color:"#aaa", letterSpacing:"0.08em", textTransform:"uppercase" }}>
+            MODULE 4 · FINANCING STRUCTURE
+          </span>
+        </div>
+        <div style={{ display:"flex", gap:8 }}>
+          <div style={{ padding:"4px 10px", borderRadius:4, fontSize:9, fontWeight:700,
+            background: calcs.permDSCR >= (permanent.dscr_requirement||1.15) ? "#f0f9f4" : "#fce8e3",
+            color: calcs.permDSCR >= (permanent.dscr_requirement||1.15) ? "#1a6b3c" : "#8B2500",
+            border:`1px solid ${calcs.permDSCR >= (permanent.dscr_requirement||1.15) ? "#b8dfc8" : "#f5c2b0"}` }}>
+            Senior DSCR: {fmtX(calcs.permDSCR)}
+          </div>
+        </div>
+      </div>
+
+      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:20 }}>
+
+        {/* LEFT COLUMN */}
+        <div>
+          {/* ── CONSTRUCTION LOAN ── */}
+          <div style={{ background:"white", border:"1px solid #e0e0e0", borderRadius:6,
+            padding:"16px 18px", marginBottom:16 }}>
+            <SectionHeader title="Construction Financing" color="#8B2500"
+              subtitle="Tax-exempt + taxable companion loan · Module 2B will calculate exact interest" />
+
+            <FieldRow label="Lender">
+              <TextInput value={construction.lender} onChange={v => updateConstruction({ lender: v })} width={180} />
+            </FieldRow>
+            <FieldRow label="TE Bond Amount" note="Drives 4% bond test in Module 3">
+              <NumInput value={construction.te_loan_amount} step={100000}
+                onChange={v => updateConstruction({ te_loan_amount: v })} prefix="$" />
+            </FieldRow>
+            <FieldRow label="Taxable Companion Loan">
+              <NumInput value={construction.taxable_loan_amount} step={100000}
+                onChange={v => updateConstruction({ taxable_loan_amount: v })} prefix="$" />
+            </FieldRow>
+            <FieldRow label="Combined Construction Loan">
+              <span style={{ fontSize:12, fontWeight:700, color:"#8B2500" }}>
+                {fmt$(calcs.combinedConstLoan)}
+              </span>
+            </FieldRow>
+            <FieldRow label="TE Rate" note="Tax-exempt tranche">
+              <NumInput value={construction.te_rate} pct step={0.005}
+                onChange={v => updateConstruction({ te_rate: v })} />
+            </FieldRow>
+            <FieldRow label="Taxable Rate">
+              <NumInput value={construction.taxable_rate} pct step={0.005}
+                onChange={v => updateConstruction({ taxable_rate: v })} />
+            </FieldRow>
+            <FieldRow label="Term (months)">
+              <NumInput value={construction.term_months} step={1}
+                onChange={v => updateConstruction({ term_months: v })} width={60} />
+            </FieldRow>
+            <FieldRow label="LTC %">
+              <NumInput value={construction.ltc_pct} pct step={1}
+                onChange={v => updateConstruction({ ltc_pct: v })} />
+            </FieldRow>
+            <FieldRow label="Origination Fee %">
+              <NumInput value={construction.origination_pct} pct step={0.1}
+                onChange={v => updateConstruction({ origination_pct: v })} />
+            </FieldRow>
+
+            {/* Interest estimate calc */}
+            <div style={{ background:"#fdf8f0", border:"1px solid #e8d9b8", borderRadius:5,
+              padding:"10px 12px", marginTop:10 }}>
+              <div style={{ fontSize:8, fontWeight:700, color:"#5a3a00", textTransform:"uppercase",
+                letterSpacing:"0.07em", marginBottom:8 }}>
+                Interest Estimate — Avg Draw-Down Method
+              </div>
+              <FieldRow label="Avg % Drawn (construction)" note="Apply to loan balance for interest calc">
+                <NumInput value={construction.avg_draw_pct} pct step={1}
+                  onChange={v => updateConstruction({ avg_draw_pct: v })} />
+              </FieldRow>
+              <FieldRow label="Lease-Up Months">
+                <NumInput value={construction.leaseup_months} step={1}
+                  onChange={v => updateConstruction({ leaseup_months: v })} width={60} />
+              </FieldRow>
+              <FieldRow label="Avg % Drawn (lease-up)">
+                <NumInput value={construction.leaseup_draw_pct} pct step={1}
+                  onChange={v => updateConstruction({ leaseup_draw_pct: v })} />
+              </FieldRow>
+              <div style={{ borderTop:"1px solid #e8d9b8", marginTop:8, paddingTop:8 }}>
+                <CalcRow label="Construction Interest Est." value={fmt$(calcs.constInterestEst)} highlight />
+                <CalcRow label="Lease-Up Interest Est."    value={fmt$(calcs.leaseupInt)} />
+              </div>
+              <div style={{ fontSize:8, color:"#c47a3a", marginTop:6 }}>
+                Module 2B (Construction Cash Flow) will replace these with exact monthly calculations.
+              </div>
+            </div>
+          </div>
+
+          {/* ── OTHER SOURCES ── */}
+          <div style={{ background:"white", border:"1px solid #e0e0e0", borderRadius:6,
+            padding:"16px 18px" }}>
+            <SectionHeader title="Other Sources / Grants" color="#4a1a6b" />
+            {otherSources.map(src => (
+              <FieldRow key={src.id} label={
+                <input value={src.label} onChange={e => updateOtherSource(src.id, { label: e.target.value })}
+                  style={{ background:"transparent", border:"none", outline:"none", fontSize:10,
+                    color:"#444", fontFamily:"Inter, sans-serif", width:160 }} />
+              }>
+                <NumInput value={src.amount} step={10000}
+                  onChange={v => updateOtherSource(src.id, { amount: v })} prefix="$" />
+              </FieldRow>
+            ))}
+            <FieldRow label="Deferred Developer Fee" note="From Module 2A">
+              <span style={{ fontSize:11, fontWeight:600, color:"#444" }}>{fmt$(deferredDevFee)}</span>
+            </FieldRow>
+          </div>
+        </div>
+
+        {/* RIGHT COLUMN */}
+        <div>
+          {/* ── PERMANENT LOAN — DSCR SIZING ── */}
+          <div style={{ background:"white", border:"1px solid #e0e0e0", borderRadius:6,
+            padding:"16px 18px", marginBottom:16 }}>
+            <SectionHeader title="Permanent Loan" color="#1a3a6b"
+              subtitle="DSCR-constrained sizing" />
+
+            <FieldRow label="Lender">
+              <TextInput value={permanent.lender} onChange={v => updatePermanent({ lender: v })} width={180} />
+            </FieldRow>
+            <FieldRow label="Lender Type">
+              <Select value={permanent.lender_type}
+                onChange={v => updatePermanent({ lender_type: v })}
+                options={[
+                  {value:"Agency",label:"Agency"},
+                  {value:"Bank",label:"Bank"},
+                  {value:"CDFI",label:"CDFI"},
+                  {value:"HFA",label:"HFA"},
+                  {value:"Other",label:"Other"},
+                ]} width={120} />
+            </FieldRow>
+            <FieldRow label="Rate">
+              <NumInput value={permanent.rate} pct step={0.005}
+                onChange={v => updatePermanent({ rate: v })} />
+            </FieldRow>
+            <FieldRow label="Amortization (years)">
+              <NumInput value={permanent.amort_years} step={1}
+                onChange={v => updatePermanent({ amort_years: v })} width={60} />
+            </FieldRow>
+            <FieldRow label="Loan Term (years)">
+              <NumInput value={permanent.term_years} step={1}
+                onChange={v => updatePermanent({ term_years: v })} width={60} />
+            </FieldRow>
+            <FieldRow label="DSCR Requirement">
+              <NumInput value={permanent.dscr_requirement} step={0.01}
+                onChange={v => updatePermanent({ dscr_requirement: v })} />
+            </FieldRow>
+            <FieldRow label="IO Period (years)" note="0 = fully amortizing from day 1">
+              <NumInput value={permanent.io_years} step={1}
+                onChange={v => updatePermanent({ io_years: v })} width={60} />
+            </FieldRow>
+
+            {/* NOI input — temp until proforma wired */}
+            <div style={{ background:"#f0f3f9", border:"1px solid #b8c8e0", borderRadius:5,
+              padding:"10px 12px", marginTop:10, marginBottom:10 }}>
+              <div style={{ fontSize:8, fontWeight:700, color:"#1a3a6b", textTransform:"uppercase",
+                letterSpacing:"0.07em", marginBottom:6 }}>
+                NOI Input — Temp until Proforma module wired
+              </div>
+              <FieldRow label="Use NOI override?">
+                <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+                  <input type="checkbox" checked={permanent.use_noi_override}
+                    onChange={e => updatePermanent({ use_noi_override: e.target.checked })}
+                    style={{ cursor:"pointer", accentColor:"#1a3a6b" }} />
+                </div>
+              </FieldRow>
+              <FieldRow label="NOI (Untrended)">
+                <NumInput value={permanent.noi_override} step={10000}
+                  onChange={v => updatePermanent({ noi_override: v })}
+                  disabled={!permanent.use_noi_override} prefix="$" />
+              </FieldRow>
+            </div>
+
+            {/* DSCR Sizing Waterfall */}
+            <div style={{ background:"#f8f8f8", border:"1px solid #e0e0e0", borderRadius:5,
+              padding:"10px 12px" }}>
+              <div style={{ fontSize:8, fontWeight:700, color:"#888", textTransform:"uppercase",
+                letterSpacing:"0.07em", marginBottom:8 }}>DSCR Sizing</div>
+              <CalcRow label="NOI (Untrended)"              value={fmt$(calcs.noi)} />
+              <CalcRow label={`÷ DSCR Requirement (${fmtX(permanent.dscr_requirement)})`}
+                       value={fmt$(calcs.maxADS)} operator="÷" />
+              <CalcRow label={`÷ Debt Constant (${fmtPct2(calcs.dc)})`}
+                       value={fmt$(calcs.maxLoanDSCR)} operator="÷" />
+              <div style={{ borderTop:"2px solid #111", marginTop:6, paddingTop:6 }}>
+                <CalcRow label="Max Loan (DSCR-constrained)" value={fmt$(calcs.maxLoanDSCR)} highlight />
+              </div>
+            </div>
+
+            {/* Actual loan amount */}
+            <div style={{ marginTop:10 }}>
+              <FieldRow label="Loan Amount" note="Override DSCR max if lender comes in different">
+                <NumInput value={permanent.loan_amount} step={100000}
+                  onChange={v => updatePermanent({ loan_amount: v })} prefix="$" />
+              </FieldRow>
+              <FieldRow label="Origination Fee %">
+                <NumInput value={permanent.origination_pct} pct step={0.1}
+                  onChange={v => updatePermanent({ origination_pct: v })} />
+              </FieldRow>
+
+              {/* Actual DSCR check */}
+              <div style={{ background: calcs.permDSCR >= (permanent.dscr_requirement||1.15) ? "#f0f9f4" : "#fce8e3",
+                border:`1px solid ${calcs.permDSCR >= (permanent.dscr_requirement||1.15) ? "#b8dfc8" : "#f5c2b0"}`,
+                borderRadius:5, padding:"8px 12px", marginTop:8 }}>
+                {[
+                  { label:"Annual Debt Service",  value: fmt$(calcs.permADS) },
+                  { label:"Actual DSCR",          value: fmtX(calcs.permDSCR) },
+                  { label:"Required DSCR",         value: fmtX(permanent.dscr_requirement||1.15) },
+                ].map(r => (
+                  <div key={r.label} style={{ display:"flex", justifyContent:"space-between",
+                    fontSize:10, marginBottom:4 }}>
+                    <span style={{ color:"#666" }}>{r.label}</span>
+                    <span style={{ fontWeight:700,
+                      color: r.label==="Actual DSCR"
+                        ? (calcs.permDSCR >= (permanent.dscr_requirement||1.15) ? "#1a6b3c" : "#8B2500")
+                        : "#111" }}>{r.value}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* ── SUBORDINATE DEBT ── */}
+      <div style={{ background:"white", border:"1px solid #e0e0e0", borderRadius:6,
+        padding:"16px 18px", marginTop:4 }}>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center",
+          marginBottom:14 }}>
+          <div>
+            <SectionHeader title="Subordinate Debt Stack" color="#5a3a00"
+              subtitle="Drag to reorder priority · Expand each loan for balance projection" />
+          </div>
+          <button onClick={addSubdebt}
+            style={{ background:"#5a3a00", color:"white", border:"none", padding:"6px 14px",
+              borderRadius:4, cursor:"pointer", fontSize:9, fontWeight:700,
+              fontFamily:"Inter, sans-serif", letterSpacing:"0.07em", textTransform:"uppercase" }}>
+            + Add Loan
+          </button>
+        </div>
+
+        {subdebt.length === 0 ? (
+          <div style={{ padding:"20px", textAlign:"center", color:"#aaa", fontSize:11 }}>
+            No subordinate debt — click + Add Loan to add soft loans, seller notes, etc.
+          </div>
         ) : (
-          <div style={{ color:"#bbb", fontSize:11 }}>No permanent loan configured.</div>
+          <SubdebtList
+            loans={subdebt}
+            onUpdate={updateSubdebt}
+            onRemove={removeSubdebt}
+            onReorder={reorderSubdebt}
+          />
+        )}
+
+        {/* Subdebt totals */}
+        {subdebt.length > 0 && (
+          <div style={{ display:"flex", gap:16, marginTop:8, padding:"8px 12px",
+            background:"#fdf8f0", border:"1px solid #e8d9b8", borderRadius:5 }}>
+            <div>
+              <div style={{ fontSize:8, color:"#aaa", textTransform:"uppercase",
+                letterSpacing:"0.06em" }}>Total Subdebt</div>
+              <div style={{ fontSize:14, fontWeight:700, color:"#5a3a00" }}>
+                {fmt$(subdebt.reduce((s,l)=>s+(l.amount||0),0))}
+              </div>
+            </div>
+            <div>
+              <div style={{ fontSize:8, color:"#aaa", textTransform:"uppercase",
+                letterSpacing:"0.06em" }}>Annual Cash DS</div>
+              <div style={{ fontSize:14, fontWeight:700, color:"#1a3a6b" }}>
+                {fmt$(calcs.subdebtADS)}
+              </div>
+            </div>
+            <div>
+              <div style={{ fontSize:8, color:"#aaa", textTransform:"uppercase",
+                letterSpacing:"0.06em" }}>Accrual Loans</div>
+              <div style={{ fontSize:14, fontWeight:700, color:"#8B2500" }}>
+                {subdebt.filter(l => ["accrual","contingent","partial"].includes(l.payment_type)).length} loans
+              </div>
+            </div>
+          </div>
         )}
       </div>
 
-      {/* 3. Equity & Deferred (read-only summary) */}
-      {(equitySrc||deferredSrc) && (
-        <div style={SECTION}>
-          <SectionHeader label="Equity & Deferred Fee" sub="Engine-calculated — configure in Capital Stack" />
-          {[equitySrc,deferredSrc].filter(Boolean).map(src=>(
-            <SourceRow key={src.id} src={src} isCalc={true}
-              onChange={fields=>updateAndSave(src.id,fields)}
-              onDelete={()=>{}} />
-          ))}
-        </div>
-      )}
-
-      {/* 4. Sub-Debt / Soft Sources */}
-      <div style={SECTION}>
-        <SectionHeader label="Sub-Debt & Soft Sources" sub="Grants, HOME loans, subordinate debt"
-          action={
-            <button onClick={addSubDebt}
-              style={{ background:"#1a6b3c", color:"white", border:"none", padding:"5px 14px",
-                borderRadius:3, cursor:"pointer", fontSize:9, textTransform:"uppercase",
-                fontFamily:"'DM Mono',monospace", fontWeight:700, letterSpacing:"0.06em" }}>
-              + Add Source
-            </button>
-          }
+      {/* ── SOURCES VS USES SUMMARY ── */}
+      <div style={{ marginTop:16 }}>
+        <SourcesUsesSummary
+          calcs={calcs}
+          permanent={permanent}
+          construction={construction}
+          subdebt={subdebt}
+          otherSources={otherSources}
+          lihtcEquity={lihtcEquity}
+          stateEquity={stateEquity}
+          deferredDevFee={deferredDevFee}
+          tdc={tdc}
         />
-        {subDebtSrcs.length===0 && <div style={{ color:"#bbb", fontSize:11, padding:"8px 0" }}>No soft sources added.</div>}
-        {subDebtSrcs.map(src=>(
-          <SourceRow key={src.id} src={src} isCalc={false}
-            onChange={fields=>updateAndSave(src.id,fields)}
-            onDelete={()=>removeSource(src.id)} />
-        ))}
       </div>
-
-      {/* Sensitivity grid */}
-      {showGrid && noi>0 && permRate>0 && (
-        <SensGrid noi={noi} baseRate={permRate} baseAmort={permAmort} baseDSCR={dscrTarget} />
-      )}
-
-      {/* Amort schedule */}
-      {showAmort && permLoan>0 && (
-        <AmortSchedule principal={permLoan} rate={permRate} amortYears={permAmort} termYears={permTerm} noi={noi} />
-      )}
     </div>
   );
 }
