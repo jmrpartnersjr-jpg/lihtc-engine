@@ -427,8 +427,8 @@ export default function TaxCreditPanel() {
                 onChange={v => update({ investor_price: v })} prefix="¢" />
             </InputField>
 
-            <InputField label="TE Bond Amount (temp — from Debt module)"
-              note="Used for bond test only">
+            <InputField label="TE Bond Amount"
+              note="Derived from Debt module: TDC × Bond Test Target %. Override here if needed.">
               <NumberInput value={inputs.te_bond_amount} step={100000}
                 onChange={v => update({ te_bond_amount: v })} prefix="$" />
             </InputField>

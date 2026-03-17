@@ -20,17 +20,22 @@ const mkId = () => ++_id;
 // DEFAULT STATE — Apollo SL calibrated
 // ─────────────────────────────────────────────────────────────────────────────
 const DEFAULT_CONSTRUCTION = {
-  lender:              "TBD",
-  te_loan_amount:      32941402,
-  taxable_loan_amount: 17814416,
-  te_rate:             0.0585,
-  taxable_rate:        0.0585,
-  term_months:         36,
-  ltc_pct:             0.82,
-  origination_pct:     0.01,
-  avg_draw_pct:        0.65,   // avg % drawn during construction (for interest estimate)
-  leaseup_months:      12,
-  leaseup_draw_pct:    0.85,   // avg % drawn during lease-up
+  lender:                "TBD",
+  // Loan sizing — derived from TDC
+  bond_test_target_pct:  0.35,   // % of TDC to finance with TE bonds (above 25% floor)
+  ltc_pct:               0.82,   // combined loan as % of TDC
+  // Calculated from above — stored for reference / manual override
+  te_loan_amount:        32941402,
+  taxable_loan_amount:   17814416,
+  // Rates
+  te_rate:               0.0585,
+  taxable_rate:          0.0585,
+  // Term
+  term_months:           36,
+  origination_pct:       0.01,
+  avg_draw_pct:          0.65,   // avg % drawn during construction (for interest estimate)
+  leaseup_months:        12,
+  leaseup_draw_pct:      0.85,   // avg % drawn during lease-up
 };
 
 const DEFAULT_PERMANENT = {
@@ -53,7 +58,8 @@ const DEFAULT_PERMANENT = {
 const DEFAULT_SUBDEBT = [
   {
     id: 400, label: "Deferred Developer Fee", priority: 1,
-    loan_type: "deferred_fee", amount: 5927282, rate: 0.0, term_years: 12,
+    loan_type: "deferred_fee", amount: 0,  // populated dynamically from budget calc at render
+    rate: 0.0, term_years: 12,
     payment_type: "accrual", cash_pay_annual: 0, compound_accrual: false,
     forgive_pct_per_year: 0, in_ads: false,
     notes: "Must be paid in full by Year 12. Zero interest unless otherwise structured. Payable from cash flow, subordinate to all other debt.",
@@ -202,19 +208,26 @@ function subdebtAnnualDS(loan) {
   }
 }
 
-function computeDebt(construction, permanent, subdebt, lihtcCalcs, budgetCalcs) {
-  // Construction
-  const combinedConstLoan = (construction.te_loan_amount || 0) + (construction.taxable_loan_amount || 0);
+function computeDebt(construction, permanent, subdebt, lihtcCalcs, budgetCalcs, tdc) {
+  // Construction — derive loan amounts from TDC if bond_test_target_pct is set
+  const _tdc          = tdc || 0;
+  const combinedTarget = _tdc * (construction.ltc_pct || 0.82);
+  const teTarget       = _tdc * (construction.bond_test_target_pct || 0.35);
+  const taxTarget      = Math.max(0, combinedTarget - teTarget);
+  // Use derived values; fall back to stored amounts if TDC not available
+  const teLoan         = _tdc > 0 ? teTarget       : (construction.te_loan_amount || 0);
+  const taxLoan        = _tdc > 0 ? taxTarget       : (construction.taxable_loan_amount || 0);
+  const combinedConstLoan = teLoan + taxLoan;
   const constOrigination  = combinedConstLoan * (construction.origination_pct || 0);
 
   // Interest estimate — average draw-down method
   // TE portion
-  const teInt = (construction.te_loan_amount || 0)
+  const teInt = teLoan
     * (construction.te_rate || 0)
     * (construction.avg_draw_pct || 0.65)
     * ((construction.term_months || 36) / 12);
   // Taxable portion
-  const taxInt = (construction.taxable_loan_amount || 0)
+  const taxInt = taxLoan
     * (construction.taxable_rate || 0)
     * (construction.avg_draw_pct || 0.65)
     * ((construction.term_months || 36) / 12);
@@ -247,7 +260,8 @@ function computeDebt(construction, permanent, subdebt, lihtcCalcs, budgetCalcs) 
   const totalDSCR = totalADS > 0 ? noi / totalADS : 0;
 
   return {
-    combinedConstLoan, constOrigination, constInterestEst, leaseupInt,
+    combinedConstLoan, teLoan, taxLoan, teTarget, combinedTarget,
+    constOrigination, constInterestEst, leaseupInt,
     teInt, taxInt,
     noi, maxADS, maxLoanDSCR, dc,
     permADS, permDSCR, permOrig,
@@ -792,7 +806,7 @@ export default function DebtPanel() {
 
   const construction  = { ...DEFAULT_CONSTRUCTION,  ...moduleStates.debt?.construction  };
   const permanent     = { ...DEFAULT_PERMANENT,      ...moduleStates.debt?.permanent     };
-  const subdebt       = moduleStates.debt?.subdebt       ?? DEFAULT_SUBDEBT;
+  const rawSubdebt    = moduleStates.debt?.subdebt       ?? DEFAULT_SUBDEBT;
   const otherSources  = moduleStates.debt?.other_sources ?? DEFAULT_OTHER_SOURCES;
 
   // TDC from budget module
@@ -850,7 +864,15 @@ export default function DebtPanel() {
       : 0;
   }
 
-  const calcs = computeDebt(construction, permanent, subdebt, null, null);
+  // Sync DDF amount from budget calc into the subdebt entry
+  // This ensures the DDF entry always reflects the live budget calculation
+  const subdebt = rawSubdebt.map(l =>
+    l.loan_type === "deferred_fee"
+      ? { ...l, amount: deferredDevFee || l.amount }
+      : l
+  );
+
+  const calcs = computeDebt(construction, permanent, subdebt, null, null, tdc);
 
   // Writers
   const updateConstruction = p => updateModule("debt", { construction: { ...construction, ...p } });
@@ -898,59 +920,54 @@ export default function DebtPanel() {
             <SectionHeader title="Construction Financing" color="#8B2500"
               subtitle="Tax-exempt + taxable companion loan · Module 2B will calculate exact interest" />
 
-            {/* Budget drift warning */}
-            {(() => {
-              const currentLTC = tdc > 0 ? calcs.combinedConstLoan / tdc : 0;
-              const storedLTC  = construction.ltc_pct || 0.82;
-              const drift      = Math.abs(currentLTC - storedLTC);
-              return drift > 0.02 ? (
-                <div style={{ background:"#fdf8f0", border:"1px solid #e8c84a", borderRadius:5,
-                  padding:"8px 12px", marginBottom:10, display:"flex", justifyContent:"space-between",
-                  alignItems:"center", gap:10 }}>
-                  <div>
-                    <div style={{ fontSize:9, fontWeight:700, color:"#5a3a00" }}>
-                      ⚠ Loan amounts may be stale — TDC has changed
-                    </div>
-                    <div style={{ fontSize:8, color:"#7a5a00", marginTop:2 }}>
-                      Current LTC: {(currentLTC*100).toFixed(1)}% · Target: {(storedLTC*100).toFixed(1)}% · Drift: {(drift*100).toFixed(1)}%
-                    </div>
-                  </div>
-                  <button
-                    onClick={() => {
-                      const newCombined = tdc * storedLTC;
-                      const tePct = calcs.combinedConstLoan > 0
-                        ? construction.te_loan_amount / calcs.combinedConstLoan
-                        : 0.647;
-                      updateConstruction({
-                        te_loan_amount:      Math.round(newCombined * tePct),
-                        taxable_loan_amount: Math.round(newCombined * (1 - tePct)),
-                      });
-                    }}
-                    style={{ background:"#5a3a00", color:"white", border:"none", borderRadius:3,
-                      padding:"5px 10px", fontSize:8, fontWeight:700, cursor:"pointer",
-                      fontFamily:"Inter, sans-serif", whiteSpace:"nowrap" }}>
-                    SYNC FROM BUDGET
-                  </button>
-                </div>
-              ) : null;
-            })()}
+
 
             <FieldRow label="Lender">
               <TextInput value={construction.lender} onChange={v => updateConstruction({ lender: v })} width={180} />
             </FieldRow>
-            <FieldRow label="TE Bond Amount" note="Drives 4% bond test in Module 3">
-              <NumInput value={construction.te_loan_amount} step={100000}
-                onChange={v => updateConstruction({ te_loan_amount: v })} prefix="$" />
-            </FieldRow>
-            <FieldRow label="Taxable Companion Loan">
-              <NumInput value={construction.taxable_loan_amount} step={100000}
-                onChange={v => updateConstruction({ taxable_loan_amount: v })} prefix="$" />
-            </FieldRow>
-            <FieldRow label="Combined Construction Loan">
-              <span style={{ fontSize:12, fontWeight:700, color:"#8B2500" }}>
-                {fmt$(calcs.combinedConstLoan)}
-              </span>
-            </FieldRow>
+            {/* Bond Test Target — drives TE loan amount */}
+            <div style={{ background:"#f8f8f8", border:"1px solid #e0e0e0", borderRadius:5,
+              padding:"10px 12px", marginBottom:10 }}>
+              <div style={{ fontSize:8, fontWeight:700, color:"#888", textTransform:"uppercase",
+                letterSpacing:"0.07em", marginBottom:8 }}>Loan Sizing</div>
+              <FieldRow label="LTC %" note="Combined loan as % of TDC">
+                <NumInput value={construction.ltc_pct} pct step={1}
+                  onChange={v => updateConstruction({ ltc_pct: v })} />
+              </FieldRow>
+              <FieldRow label="Bond Test Target %" note={`Min 25% per OBBBA 2025 · Drives TE bond amount · Current: ${((calcs.teLoan / tdc) * 100).toFixed(1)}% of TDC`}>
+                <NumInput value={construction.bond_test_target_pct} pct step={1}
+                  onChange={v => updateConstruction({ bond_test_target_pct: v })} />
+              </FieldRow>
+              <div style={{ borderTop:"1px solid #e0e0e0", marginTop:8, paddingTop:8 }}>
+                <div style={{ display:"flex", justifyContent:"space-between", marginBottom:4 }}>
+                  <span style={{ fontSize:9, color:"#666" }}>TE Bond Amount</span>
+                  <span style={{ fontSize:11, fontWeight:700, color:"#1a3a6b" }}>{fmt$(calcs.teLoan)}</span>
+                </div>
+                <div style={{ display:"flex", justifyContent:"space-between", marginBottom:4 }}>
+                  <span style={{ fontSize:9, color:"#666" }}>Taxable Tail</span>
+                  <span style={{ fontSize:11, fontWeight:600, color:"#666" }}>{fmt$(calcs.taxLoan)}</span>
+                </div>
+                <div style={{ display:"flex", justifyContent:"space-between" }}>
+                  <span style={{ fontSize:9, color:"#888", fontWeight:700 }}>Combined Construction Loan</span>
+                  <span style={{ fontSize:12, fontWeight:700, color:"#8B2500" }}>{fmt$(calcs.combinedConstLoan)}</span>
+                </div>
+              </div>
+              {/* Bond test check */}
+              {(() => {
+                const bondPct = tdc > 0 ? calcs.teLoan / (tdc - ((moduleStates.budget?.sections?.acquisition?.reduce((s,l)=>s+(l.amount||0),0)) || 4488000)) : 0;
+                const passes = bondPct >= 0.25;
+                return (
+                  <div style={{ marginTop:8, padding:"5px 8px", borderRadius:4,
+                    background: passes ? "#f0f9f4" : "#fce8e3",
+                    border:`1px solid ${passes ? "#b8dfc8" : "#f5c2b0"}` }}>
+                    <span style={{ fontSize:8, fontWeight:700,
+                      color: passes ? "#1a6b3c" : "#8B2500" }}>
+                      {passes ? "✓" : "✗"} 25% Bond Test: {(bondPct * 100).toFixed(1)}% of aggregate basis
+                    </span>
+                  </div>
+                );
+              })()}
+            </div>
             <FieldRow label="TE Rate" note="Tax-exempt tranche">
               <NumInput value={construction.te_rate} pct step={0.005}
                 onChange={v => updateConstruction({ te_rate: v })} />
@@ -963,10 +980,7 @@ export default function DebtPanel() {
               <NumInput value={construction.term_months} step={1}
                 onChange={v => updateConstruction({ term_months: v })} width={60} />
             </FieldRow>
-            <FieldRow label="LTC %">
-              <NumInput value={construction.ltc_pct} pct step={1}
-                onChange={v => updateConstruction({ ltc_pct: v })} />
-            </FieldRow>
+
             <FieldRow label="Origination Fee %">
               <NumInput value={construction.origination_pct} pct step={0.1}
                 onChange={v => updateConstruction({ origination_pct: v })} />
