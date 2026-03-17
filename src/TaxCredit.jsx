@@ -329,7 +329,7 @@ export default function TaxCreditPanel() {
     tdc = subtotal + devFee;
     // Eligible basis — sum of in_basis lines + dev fee
     const _calcRefs = {
-      salesTax: hcTax, contingency: hcCont, scContingency: (scAll*(a.sc_contingency_pct||0)),
+      salesTax: hcTax, contingency: hcCont, scContingency: (scInputs*(a.sc_contingency_pct||0)),
       constOrigination: ((a.const_loan_amount||0)+(a.taxable_loan_amount||0))*(a.const_origination_pct||0),
       permOrigination: 0, // perm orig not in basis
       constInterest: a.const_interest_est||0,
