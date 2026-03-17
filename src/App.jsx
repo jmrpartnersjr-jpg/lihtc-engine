@@ -779,7 +779,7 @@ export default function App() {
             />
           )}
           {tab==="taxcredit" && (
-            <TaxCreditPanel baseFA={baseFA} projectId={activeId} scenarioId={dbScenario?.id || null} budgetWithCalc={budgetBasis?.budget || null} tranches={dbTranches || []} devFeeRows={dbFeeRows || []} onFAChange={fa => setDbFA(prev => ({ ...prev, [activeId]: fa }))} />
+            <TaxCreditPanel />
           )}
           {tab==="stack" && (
             <CapitalStackPanel scenario={dbScenario} baseFA={baseFA} budgetWithCalc={budgetBasis?.budget || null} />
