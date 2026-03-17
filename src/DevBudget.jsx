@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef } from "react";
 import { useLihtc } from "./context/LihtcContext.jsx";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -177,11 +177,13 @@ function computeBudget(sections, assumptions, totalUnits, noi, ads) {
   const tdc            = subtotal + devFeeTotal;
 
   // Eligible basis — everything in_basis, excluding land, perm loan items, dev fee treatment
+  // Build the full calcs object first so resolveAmount has what it needs
+  const calcRefs = { salesTax, contingency, scContingency, constOrigination, permOrigination, constInterest, leaseupInterest, opRes, repRes, adsRes };
   const basisFromSections = Object.entries(sections).reduce((total, [, items]) => {
     return total + items.reduce((s, l) => {
       if (!l.in_basis) return s;
-      const amt = resolveAmount(l, { hcInputs, scInputs, constOrigination, permOrigination, constInterest, leaseupInterest, opRes, repRes, adsRes });
-      return s + amt;
+      const amt = resolveAmount(l, calcRefs);
+      return s + (isNaN(amt) ? 0 : amt);
     }, 0);
   }, 0);
   const eligibleBasis = basisFromSections + devFeeTotal; // dev fee is in basis
@@ -277,6 +279,36 @@ function AssumptionsBar({ assumptions, onUpdate }) {
   );
 }
 
+// Dollar-formatted amount input — shows $X,XXX display, raw number on focus
+function AmountInput({ value, onChange, color }) {
+  const [editing, setEditing] = useState(false);
+  const inputRef = useRef(null);
+  const handleFocus = () => { setEditing(true); setTimeout(() => inputRef.current?.select(), 10); };
+  const handleBlur  = e => { setEditing(false); onChange(e.target.value === "" ? 0 : Number(e.target.value)); };
+  return (
+    <div style={{ position:"relative", display:"flex", alignItems:"center", justifyContent:"flex-end" }}>
+      {!editing && (
+        <span
+          onClick={() => { setEditing(true); setTimeout(() => inputRef.current?.focus(), 10); }}
+          style={{ fontSize:11, fontFamily:"Inter, sans-serif", color:"#111", cursor:"text",
+            padding:"2px 4px", minWidth:110, textAlign:"right", display:"block" }}>
+          {value != null && value !== 0 ? fmt$(value) : <span style={{color:"#ccc"}}>$0</span>}
+        </span>
+      )}
+      <input
+        ref={inputRef}
+        type="number"
+        defaultValue={value ?? 0}
+        onFocus={handleFocus}
+        onBlur={handleBlur}
+        style={{ position: editing ? "relative" : "absolute", opacity: editing ? 1 : 0, pointerEvents: editing ? "auto" : "none",
+          background:"transparent", border:"none", borderBottom:`1px solid ${color}`, outline:"none",
+          fontSize:11, fontFamily:"Inter, sans-serif", color:"#111", textAlign:"right", width:110, padding:"2px 4px" }}
+      />
+    </div>
+  );
+}
+
 function LineRow({ line, resolvedAmount, totalUnits, onUpdate, onRemove, color }) {
   const perUnit = totalUnits > 0 ? resolvedAmount / totalUnits : null;
   const isCalc  = line.type !== "input";
@@ -307,16 +339,7 @@ function LineRow({ line, resolvedAmount, totalUnits, onUpdate, onRemove, color }
             )}
           </span>
         ) : (
-          <input
-            type="number"
-            value={line.amount ?? ""}
-            onChange={e => onUpdate({ amount: e.target.value === "" ? 0 : Number(e.target.value) })}
-            style={{ background:"transparent", border:"none", borderBottom:"1px solid transparent", outline:"none",
-              fontSize:11, fontFamily:"Inter, sans-serif", color:"#111", textAlign:"right", width:110,
-              padding:"2px 4px" }}
-            onFocus={e => e.target.style.borderBottomColor = color}
-            onBlur={e => e.target.style.borderBottomColor = "transparent"}
-          />
+          <AmountInput value={line.amount} onChange={v => onUpdate({ amount: v })} color={color} />
         )}
       </td>
       {/* $/unit */}
@@ -511,9 +534,9 @@ export default function DevBudgetPanel({ onBudgetUpdate }) {
           <thead>
             <tr>
               <TH align="left">Line Item</TH>
-              <TH>Amount</TH>
-              <TH>$/Unit</TH>
-              <TH>In Basis</TH>
+              <TH align="right">Amount</TH>
+              <TH align="right">$/Unit</TH>
+              <TH align="center">Basis</TH>
               <TH align="left">Notes</TH>
               <TH></TH>
             </tr>
