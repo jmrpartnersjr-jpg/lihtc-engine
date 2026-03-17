@@ -52,12 +52,15 @@ function computeLIHTC(inputs, budgetCalcs, totalUnits) {
   const budgetBasis  = budgetCalcs?.eligibleBasis   ?? 56809210; // pre-boost
 
   // STEP 1 — Eligible Basis
-  // TDC minus land minus non-basis costs
-  const adjustedEligibleBasis = tdc
-    - landCost
-    - (i.non_basis_costs   || 0)
-    - (i.commercial_costs  || 0)
-    - (i.federal_grants    || 0)
+  // If budget module has computed eligibleBasis from in_basis flags, use it directly.
+  // Otherwise fall back to: TDC - land - non_basis_costs deductions (manual inputs).
+  // Additional adjustments (commercial costs, grants, historic reduction) always apply.
+  const _baseBasis = budgetCalcs?.eligibleBasis != null
+    ? budgetCalcs.eligibleBasis  // live from Dev Budget in_basis flags — exact
+    : (tdc - landCost - (i.non_basis_costs || 0)); // manual fallback
+  const adjustedEligibleBasis = _baseBasis
+    - (i.commercial_costs   || 0)
+    - (i.federal_grants     || 0)
     - (i.historic_reduction || 0);
 
   // STEP 2 — Basis Boost
@@ -283,7 +286,7 @@ export default function TaxCreditPanel() {
 
   // Compute budget numbers from moduleStates.budget
   // Uses same logic as DevBudget computeBudget to ensure consistent TDC
-  let tdc = 67824621, acqTotal = 4488000, tcAggrBasis = null;
+  let tdc = 67824621, acqTotal = 4488000, tcAggrBasis = null, tcEligibleBasis = null;
   if (budget?.sections && budget?.assumptions) {
     const a = budget.assumptions;
     const s = budget.sections;
@@ -324,6 +327,27 @@ export default function TaxCreditPanel() {
     const subtotal = acqTotal + hcTotal + scTotal + finTotal + orgTotal;
     const devFee   = subtotal * (a.dev_fee_pct || 0.15);
     tdc = subtotal + devFee;
+    // Eligible basis — sum of in_basis lines + dev fee
+    const _calcRefs = {
+      salesTax: hcTax, contingency: hcCont, scContingency: (scAll*(a.sc_contingency_pct||0)),
+      constOrigination: ((a.const_loan_amount||0)+(a.taxable_loan_amount||0))*(a.const_origination_pct||0),
+      permOrigination: 0, // perm orig not in basis
+      constInterest: a.const_interest_est||0,
+      leaseupInterest: 0, // lease-up not in basis
+      opRes: 0, repRes: 0, adsRes: 0, // reserves not in basis
+    };
+    tcEligibleBasis = devFee + Object.values(s).flat().reduce((sum, l) => {
+      if (!l.in_basis) return sum;
+      let amt = l.amount || 0;
+      if (l.type==='pct_hc') amt = l.label?.toLowerCase().includes('tax') ? _calcRefs.salesTax : _calcRefs.contingency;
+      else if (l.type==='pct_sc') amt = _calcRefs.scContingency;
+      else if (l.type==='pct_loan_const') amt = _calcRefs.constOrigination;
+      else if (l.type==='pct_loan_perm') amt = 0;
+      else if (l.type==='est_2b') amt = l.label?.toLowerCase().includes('lease') ? 0 : _calcRefs.constInterest;
+      else if (['calc_opres','calc_repres','calc_adsres'].includes(l.type)) amt = 0;
+      return sum + (isNaN(amt)?0:amt);
+    }, 0);
+
     // Aggregate basis from bond_basis flags
     const _cOrig  = ((a.const_loan_amount||0)+(a.taxable_loan_amount||0))*(a.const_origination_pct||0);
     const _cInt   = a.const_interest_est||0;
@@ -346,7 +370,7 @@ export default function TaxCreditPanel() {
     }, devFee); // dev fee 100% in bond basis
   }
 
-  const calcs = computeLIHTC(inputs, { tdc, acqTotal, aggregateBasis: tcAggrBasis }, totalUnits);
+  const calcs = computeLIHTC(inputs, { tdc, acqTotal, aggregateBasis: tcAggrBasis, eligibleBasis: tcEligibleBasis }, totalUnits);
   const update = (patch) => updateModule("lihtc", patch);
 
   const inpStyle = { background:"#f8f8f8", border:"1px solid #e0e0e0", borderRadius:4,
@@ -458,10 +482,12 @@ export default function TaxCreditPanel() {
               <div style={{ fontSize:8, fontWeight:700, color:"#888", textTransform:"uppercase",
                 letterSpacing:"0.08em", marginBottom:8 }}>Non-Basis Deductions</div>
               <div style={{ fontSize:8, color:"#aaa", marginBottom:8 }}>
-                These reduce TDC to Eligible Basis. Will auto-populate from Dev Budget basis flags in a future update.
+                {tcEligibleBasis != null
+                  ? "✓ Eligible basis reading live from Dev Budget in_basis flags — these fields are fallback only."
+                  : "These reduce TDC to Eligible Basis. Set up Dev Budget to auto-calculate."}
               </div>
               {[
-                { key:"non_basis_costs",   label:"Non-Basis Costs (parking, perm fees)" },
+                { key:"non_basis_costs",   label:"Non-Basis Costs (fallback only)" },
                 { key:"commercial_costs",  label:"Commercial Costs" },
                 { key:"federal_grants",    label:"Federal Grants" },
                 { key:"historic_reduction",label:"Historic Credit Reduction" },
