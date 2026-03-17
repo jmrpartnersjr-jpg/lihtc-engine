@@ -52,19 +52,26 @@ const DEFAULT_PERMANENT = {
 
 const DEFAULT_SUBDEBT = [
   {
-    id: 401, label: "Seller Note", priority: 1,
-    loan_type: "soft", amount: 1000000, rate: 0.0, term_years: 15,
+    id: 400, label: "Deferred Developer Fee", priority: 1,
+    loan_type: "deferred_fee", amount: 5927282, rate: 0.0, term_years: 12,
+    payment_type: "accrual", cash_pay_annual: 0, compound_accrual: false,
+    forgive_pct_per_year: 0, in_ads: false,
+    notes: "Must be paid in full by Year 12. Zero interest unless otherwise structured. Payable from cash flow, subordinate to all other debt.",
+  },
+  {
+    id: 401, label: "Seller Note", priority: 2,
+    loan_type: "seller", amount: 1000000, rate: 0.0, term_years: 15,
     payment_type: "accrual", cash_pay_annual: 0, compound_accrual: false,
     forgive_pct_per_year: 0, in_ads: false, notes: "",
   },
   {
-    id: 402, label: "CHIP", priority: 2,
+    id: 402, label: "CHIP", priority: 3,
     loan_type: "soft", amount: 900000, rate: 0.005, term_years: 15,
     payment_type: "accrual", cash_pay_annual: 0, compound_accrual: false,
     forgive_pct_per_year: 0, in_ads: false, notes: "",
   },
   {
-    id: 403, label: "Sponsor Note", priority: 3,
+    id: 403, label: "Sponsor Note", priority: 4,
     loan_type: "sponsor", amount: 346031, rate: 0.0, term_years: 15,
     payment_type: "accrual", cash_pay_annual: 0, compound_accrual: false,
     forgive_pct_per_year: 0, in_ads: false, notes: "",
@@ -400,6 +407,13 @@ function BalanceTable({ loan }) {
               {fmt$(rows[rows.length-1]?.closeBal)}
             </td>
           </tr>
+          {loan.loan_type === "deferred_fee" && rows[rows.length-1]?.closeBal > 0 && (
+            <tr style={{ background:"#fdf8f0" }}>
+              <td colSpan={99} style={{ padding:"4px 8px", fontSize:8, color:"#5a3a00", fontStyle:"italic" }}>
+                ⚠ DDF must be paid in full on or before Year 12 from project cash flow or recap proceeds.
+              </td>
+            </tr>
+          )}
         </tfoot>
       </table>
       {loan.compound_accrual && (
@@ -680,17 +694,17 @@ function SourcesUsesSummary({ calcs, permanent, construction, subdebt, otherSour
   const stEquity    = stateEquity || 0;
   const ddf         = deferredDevFee || 0;
 
-  const totalSources = permLoan + subdebtTot + otherTot + fedEquity + stEquity + ddf;
+  const totalSources = permLoan + subdebtTot + otherTot + fedEquity + stEquity; // DDF now in subdebtTot
   const gap          = totalSources - (tdc || 0);
   const gapPct       = tdc > 0 ? gap / tdc : 0;
 
+  // DDF is now part of subdebt stack — included in subdebtTot
   const sources = [
     { label:"Permanent Loan",          amount: permLoan,   color:"#1a3a6b" },
-    { label:"Subordinate Debt",        amount: subdebtTot, color:"#5a3a00" },
+    { label:"Subordinate Debt (incl. DDF)", amount: subdebtTot, color:"#5a3a00" },
     { label:"Federal LIHTC Equity",    amount: fedEquity,  color:"#1a6b3c" },
     { label:"State LIHTC Equity",      amount: stEquity,   color:"#2a8a50" },
     { label:"Other Sources / Grants",  amount: otherTot,   color:"#4a1a6b" },
-    { label:"Deferred Developer Fee",  amount: ddf,        color:"#444"    },
   ].filter(s => s.amount > 0);
 
   return (
@@ -781,10 +795,31 @@ export default function DebtPanel() {
   const subdebt       = moduleStates.debt?.subdebt       ?? DEFAULT_SUBDEBT;
   const otherSources  = moduleStates.debt?.other_sources ?? DEFAULT_OTHER_SOURCES;
 
-  // Read from other modules
-  const lihtcState    = moduleStates.lihtc || {};
-  const lihtcEquity   = null; // will read from Module 3 calcs — wired in next session
-  const stateEquity   = null;
+  // Read LIHTC equity from Module 3
+  // Recompute Module 3 outputs from saved inputs
+  const lihtcInputs = moduleStates.lihtc || {};
+  let lihtcEquity = null, stateEquity = null;
+  if (lihtcInputs.applicable_pct !== undefined || lihtcInputs.investor_price !== undefined) {
+    // Inline Module 3 calc to get equity raised
+    const _li = { ...{
+      credit_type:"4pct", applicable_pct:0.04, basis_boost:true, boost_factor:1.30,
+      applicable_fraction:1.0, credit_period:10, investor_price:0.82,
+      non_basis_costs:6527411, commercial_costs:0, federal_grants:0, historic_reduction:0,
+      state_credit_applies:false, state_credit_annual:0, state_credit_period:10, state_credit_price:0,
+    }, ...lihtcInputs };
+    const _adjBasis  = tdc - (budget?.sections?.acquisition?.reduce((s,l)=>s+(l.amount||0),0)||4488000)
+      - (_li.non_basis_costs||0) - (_li.commercial_costs||0)
+      - (_li.federal_grants||0) - (_li.historic_reduction||0);
+    const _boosted   = _li.basis_boost ? _adjBasis * (_li.boost_factor||1.3) : _adjBasis;
+    const _qualified = _boosted * (_li.applicable_fraction||1);
+    const _rate      = _li.credit_type==="9pct" ? 0.09 : Math.max(0.04, _li.applicable_pct||0.04);
+    const _annual    = _qualified * _rate;
+    const _total     = _annual * (_li.credit_period||10);
+    lihtcEquity = _total * (_li.investor_price||0);
+    stateEquity = _li.state_credit_applies
+      ? (_li.state_credit_annual||0) * (_li.state_credit_period||10) * (_li.state_credit_price||0)
+      : 0;
+  }
 
   // TDC from budget module
   const budget = moduleStates.budget;
@@ -944,9 +979,7 @@ export default function DebtPanel() {
                   onChange={v => updateOtherSource(src.id, { amount: v })} prefix="$" />
               </FieldRow>
             ))}
-            <FieldRow label="Deferred Developer Fee" note="From Module 2A">
-              <span style={{ fontSize:11, fontWeight:600, color:"#444" }}>{fmt$(deferredDevFee)}</span>
-            </FieldRow>
+
           </div>
         </div>
 
@@ -1047,7 +1080,8 @@ export default function DebtPanel() {
                 {[
                   { label:"Annual Debt Service",  value: fmt$(calcs.permADS) },
                   { label:"Actual DSCR",          value: fmtX(calcs.permDSCR) },
-                  { label:"Required DSCR",         value: fmtX(permanent.dscr_requirement||1.15) },
+                  { label:"Min. Required DSCR",    value: fmtX(permanent.dscr_requirement||1.15) },
+                  { label:"DSCR-Max Loan",         value: fmt$(calcs.maxLoanDSCR) },
                 ].map(r => (
                   <div key={r.label} style={{ display:"flex", justifyContent:"space-between",
                     fontSize:10, marginBottom:4 }}>
@@ -1058,6 +1092,9 @@ export default function DebtPanel() {
                         : "#111" }}>{r.value}</span>
                   </div>
                 ))}
+                <div style={{ fontSize:8, color:"#aaa", marginTop:4 }}>
+                  Loan sized below DSCR max — actual coverage exceeds minimum requirement. This is expected when bond test or other constraints drive loan size.
+                </div>
               </div>
             </div>
           </div>
