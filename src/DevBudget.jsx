@@ -399,11 +399,11 @@ function BudgetSection({ sectionKey, lines, sectionTotal, basisTotal, totalUnits
         <div style={{ display:"flex", gap:20, alignItems:"center" }}>
           <span style={{ fontSize:10 }}>
             <span style={{ opacity:0.65, fontSize:8, marginRight:4 }}>TOTAL</span>
-            {fmtM(sectionTotal)}
+            {fmt$(sectionTotal)}
           </span>
           <span style={{ fontSize:10 }}>
             <span style={{ opacity:0.65, fontSize:8, marginRight:4 }}>IN BASIS</span>
-            {fmtM(basisTotal)}
+            {fmt$(basisTotal)}
           </span>
         </div>
       </div>
@@ -574,11 +574,11 @@ export default function DevBudgetPanel({ onBudgetUpdate }) {
           <div style={{ display:"flex", gap:20, alignItems:"center" }}>
             <span style={{ fontSize:10 }}>
               <span style={{ opacity:0.5, fontSize:8, marginRight:4 }}>TOTAL</span>
-              {fmtM(calcs.devFeeTotal)}
+              {fmt$(calcs.devFeeTotal)}
             </span>
             <span style={{ fontSize:10 }}>
               <span style={{ opacity:0.5, fontSize:8, marginRight:4 }}>{(assumptions.dev_fee_pct * 100).toFixed(1)}% OF COSTS</span>
-              {fmtM(calcs.devFeeTotal)}
+              {fmt$(calcs.devFeeTotal)}
             </span>
           </div>
         </div>
@@ -610,15 +610,15 @@ export default function DevBudgetPanel({ onBudgetUpdate }) {
       <div style={{ background:"#111", color:"white", borderRadius:6, padding:"16px 20px", marginTop:8 }}>
         <div style={{ display:"grid", gridTemplateColumns:"repeat(5, 1fr)", gap:16 }}>
           {[
-            { label:"Total Dev Cost",    value: fmtM(calcs.tdc),           sub: fmt$(Math.round(calcs.tdc / totalUnits)) + "/unit", highlight: true },
-            { label:"Eligible Basis",    value: fmtM(calcs.eligibleBasis), sub: fmtPct(calcs.eligibleBasis / calcs.tdc) + " of TDC" },
-            { label:"Dev Fee",           value: fmtM(calcs.devFeeTotal),   sub: fmtPct(assumptions.dev_fee_pct) + " of costs" },
-            { label:"Hard Costs",        value: fmtM(calcs.hcTotal),       sub: fmt$(Math.round(calcs.hcTotal / totalUnits)) + "/unit" },
-            { label:"TDC ex Dev Fee",    value: fmtM(calcs.subtotal),      sub: fmt$(Math.round(calcs.subtotal / totalUnits)) + "/unit" },
+            { label:"Total Dev Cost",    value: fmt$(calcs.tdc),           sub: fmt$(Math.round(calcs.tdc / totalUnits)) + "/unit", highlight: true },
+            { label:"Eligible Basis",    value: fmt$(calcs.eligibleBasis), sub: fmtPct(calcs.eligibleBasis / calcs.tdc) + " of TDC" },
+            { label:"Dev Fee",           value: fmt$(calcs.devFeeTotal),   sub: fmtPct(assumptions.dev_fee_pct) + " of costs" },
+            { label:"Hard Costs",        value: fmt$(calcs.hcTotal),       sub: fmt$(Math.round(calcs.hcTotal / totalUnits)) + "/unit" },
+            { label:"TDC ex Dev Fee",    value: fmt$(calcs.subtotal),      sub: fmt$(Math.round(calcs.subtotal / totalUnits)) + "/unit" },
           ].map(m => (
             <div key={m.label}>
               <div style={{ fontSize:8, color:"#888", textTransform:"uppercase", letterSpacing:"0.08em", marginBottom:4 }}>{m.label}</div>
-              <div style={{ fontSize: m.highlight ? 20 : 16, fontWeight:700, fontFamily:"'Playfair Display', serif", color: m.highlight ? "white" : "#ccc" }}>
+              <div style={{ fontSize: m.highlight ? 18 : 14, fontWeight:700, fontFamily:"Inter, sans-serif", color: m.highlight ? "white" : "#ccc" }}>
                 {m.value}
               </div>
               <div style={{ fontSize:9, color:"#555", marginTop:2 }}>{m.sub}</div>
