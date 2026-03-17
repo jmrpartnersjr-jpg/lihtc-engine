@@ -33,7 +33,11 @@ const DEFAULT_ASSUMPTIONS = {
   op_reserve_fallback:  637500,
   ads_reserve_fallback: 1110159,
   // These will come from Debt module eventually
-  const_loan_amount:    32941402,
+  // const_loan_amount = TE bond loan only (for bond test)
+  // taxable_loan_amount = taxable tail/companion loan
+  // origination fee applies to COMBINED construction loan (TE + taxable)
+  const_loan_amount:    32941402,   // TE bond amount
+  taxable_loan_amount:  17814416,   // taxable companion loan
   perm_loan_amount:     34049115,
   // Construction interest estimates (overwritten by Module 2B)
   const_interest_est:   3164218,
@@ -134,13 +138,20 @@ const TYPE_LABELS = {
 function computeBudget(sections, assumptions, totalUnits, noi, ads) {
   const a = assumptions;
 
-  // Hard cost subtotal (input lines only, before calculated lines)
-  const hcInputs = sections.hard_costs
+  // Hard costs — Excel applies contingency and sales tax to all inputs EXCEPT P&P Bond.
+  // Sales tax applies to the subtotal AFTER contingency is added (Excel row 37 logic).
+  // P&P Bond is added outside the contingency/sales tax base.
+  const hcAllInputs = sections.hard_costs
     .filter(l => l.type === "input")
     .reduce((s, l) => s + (l.amount || 0), 0);
-  const contingency = hcInputs * a.hc_contingency_pct;
-  const salesTax    = hcInputs * a.sales_tax_pct;
-  const hcTotal     = hcInputs + contingency + salesTax;
+  // P&P Bond is the item explicitly flagged outside cont/tax base
+  const ppBond       = sections.hard_costs.find(l => l.label?.toLowerCase().includes("p&p") || l.label?.toLowerCase().includes("bond premium"));
+  const ppBondAmt    = ppBond?.type === "input" ? (ppBond?.amount || 0) : 0;
+  const hcContBase   = hcAllInputs - ppBondAmt;          // inputs excl. P&P Bond
+  const contingency  = hcContBase * a.hc_contingency_pct;
+  const salesTax     = (hcContBase + contingency) * a.sales_tax_pct; // applied AFTER contingency
+  const hcTotal      = hcAllInputs + contingency + salesTax;
+  const hcInputs     = hcAllInputs; // preserve existing references
 
   // Soft cost subtotal (input lines only, before contingency)
   const scInputs    = sections.soft_costs
@@ -150,7 +161,8 @@ function computeBudget(sections, assumptions, totalUnits, noi, ads) {
   const scTotal     = scInputs + scContingency;
 
   // Financing calculated lines
-  const constOrigination = a.const_loan_amount * a.const_origination_pct;
+  const combinedConstLoan = (a.const_loan_amount || 0) + (a.taxable_loan_amount || 0);
+  const constOrigination = combinedConstLoan * a.const_origination_pct;
   const permOrigination  = a.perm_loan_amount  * a.perm_origination_pct;
   const constInterest    = a.const_interest_est;
   const leaseupInterest  = a.leaseup_interest_est;
@@ -247,7 +259,8 @@ function AssumptionsBar({ assumptions, onUpdate }) {
     { key:"rep_reserve_per_unit", label:"Rep. Res. $/Unit",   pct:false },
     { key:"op_reserve_months",    label:"Op. Res. Months",    pct:false },
     { key:"ads_reserve_months",   label:"ADS Res. Months",    pct:false },
-    { key:"const_loan_amount",    label:"Const. Loan (temp)", pct:false },
+    { key:"const_loan_amount",    label:"TE Loan (temp)",      pct:false },
+    { key:"taxable_loan_amount",  label:"Taxable Loan (temp)",  pct:false },
     { key:"perm_loan_amount",     label:"Perm Loan (temp)",   pct:false },
   ]
 

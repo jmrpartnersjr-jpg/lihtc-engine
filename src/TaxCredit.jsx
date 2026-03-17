@@ -280,24 +280,48 @@ export default function TaxCreditPanel() {
     eligibleBasis: null,
   } : null;
 
-  // Compute budget numbers from moduleStates.budget directly
-  // (mirrors DevBudget computeBudget but lightweight)
+  // Compute budget numbers from moduleStates.budget
+  // Uses same logic as DevBudget computeBudget to ensure consistent TDC
   let tdc = 67824621, acqTotal = 4488000;
   if (budget?.sections && budget?.assumptions) {
     const a = budget.assumptions;
-    const sections = budget.sections;
-    const hcInputs = sections.hard_costs?.filter(l => l.type === "input").reduce((s, l) => s + (l.amount || 0), 0) || 0;
-    const hcTotal  = hcInputs * (1 + a.hc_contingency_pct + a.sales_tax_pct);
-    const scInputs = sections.soft_costs?.filter(l => l.type === "input").reduce((s, l) => s + (l.amount || 0), 0) || 0;
-    const scTotal  = scInputs * (1 + a.sc_contingency_pct);
-    const finInputs = sections.financing?.filter(l => l.type === "input").reduce((s, l) => s + (l.amount || 0), 0) || 0;
-    const finTotal  = finInputs + (a.const_loan_amount * a.const_origination_pct) + (a.perm_loan_amount * a.perm_origination_pct) + a.const_interest_est + a.leaseup_interest_est;
-    const orgInputs = sections.org_reserves?.filter(l => l.type === "input").reduce((s, l) => s + (l.amount || 0), 0) || 0;
-    const repRes = totalUnits * (a.rep_reserve_per_unit ?? 350);
-    const orgTotal  = orgInputs + (a.op_reserve_fallback ?? 637500) + repRes + (a.ads_reserve_fallback ?? 1110159);
-    acqTotal = sections.acquisition?.reduce((s, l) => s + (l.amount || 0), 0) || 4488000;
+    const s = budget.sections;
+
+    // Acquisition
+    acqTotal = s.acquisition?.reduce((sum, l) => sum + (l.amount || 0), 0) || 4488000;
+
+    // Hard costs — P&P Bond excluded from cont/tax base; sales tax applies AFTER contingency
+    const hcAllInputs = s.hard_costs?.filter(l => l.type === "input").reduce((sum, l) => sum + (l.amount || 0), 0) || 0;
+    const ppBond    = s.hard_costs?.find(l => l.label?.toLowerCase().includes("p&p") || l.label?.toLowerCase().includes("bond premium"));
+    const ppBondAmt = ppBond?.type === "input" ? (ppBond?.amount || 0) : 0;
+    const hcContBase = hcAllInputs - ppBondAmt;
+    const hcCont   = hcContBase * (a.hc_contingency_pct || 0);
+    const hcTax    = (hcContBase + hcCont) * (a.sales_tax_pct || 0);
+    const hcTotal  = hcAllInputs + hcCont + hcTax;
+
+    // Soft costs — contingency applies to input subtotal
+    const scInputs = s.soft_costs?.filter(l => l.type === "input").reduce((sum, l) => sum + (l.amount || 0), 0) || 0;
+    const scTotal  = scInputs + (scInputs * (a.sc_contingency_pct || 0));
+
+    // Financing — inputs plus calculated lines
+    const finInputs  = s.financing?.filter(l => l.type === "input").reduce((sum, l) => sum + (l.amount || 0), 0) || 0;
+    const combinedCL = (a.const_loan_amount || 0) + (a.taxable_loan_amount || 0);
+    const constOrig  = combinedCL * (a.const_origination_pct || 0);
+    const permOrig   = (a.perm_loan_amount  || 0) * (a.perm_origination_pct  || 0);
+    const constInt   = a.const_interest_est  || 0;
+    const leaseupInt = a.leaseup_interest_est || 0;
+    const finTotal   = finInputs + constOrig + permOrig + constInt + leaseupInt;
+
+    // Org / reserves
+    const orgInputs = s.org_reserves?.filter(l => l.type === "input").reduce((sum, l) => sum + (l.amount || 0), 0) || 0;
+    const repRes    = totalUnits * (a.rep_reserve_per_unit ?? 350);
+    const opRes     = a.op_reserve_fallback  ?? 637500;
+    const adsRes    = a.ads_reserve_fallback ?? 1110159;
+    const orgTotal  = orgInputs + repRes + opRes + adsRes;
+
+    // Dev fee is % of costs (not TDC) — matches DevBudget
     const subtotal = acqTotal + hcTotal + scTotal + finTotal + orgTotal;
-    const devFee = subtotal * (a.dev_fee_pct || 0.15);
+    const devFee   = subtotal * (a.dev_fee_pct || 0.15);
     tdc = subtotal + devFee;
   }
 
