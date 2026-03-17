@@ -1,290 +1,428 @@
-import { useState, useMemo, useEffect, useCallback } from "react";
-import { updateBudgetItem, upsertBudgetAssumptions } from "./db.js";
-import { runCalcEngine, ASSUMP_FIELDS, ASSUMP_GROUPS } from "./calcEngine.js";
+import { useState, useCallback } from "react";
+import { useLihtc } from "./context/LihtcContext.jsx";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// DETAILED DEVELOPMENT BUDGET — LIHTC Engine
-// Mirrors the structure of the Apollo SL Detail Dev Budget tab.
-// Categories → line items, each with amount + basis eligible toggle.
-// Totals flow into Tax Credit Basis calc.
+// MODULE 2A — DEVELOPMENT BUDGET
+// Static budget with estimated construction interest (Module 2B placeholder).
+// All inputs versioned via LihtcContext.
 // ─────────────────────────────────────────────────────────────────────────────
 
-const fmt$ = v => v == null || v === 0 ? "—" : "$" + Math.round(v).toLocaleString();
-const fmtM = v => v == null || v === 0 ? "—" : "$" + (v / 1e6).toFixed(3) + "M";
-const fmtPct = v => v == null ? "—" : (v * 100).toFixed(1) + "%";
+const fmt$  = v => v == null ? "—" : "$" + Math.round(v).toLocaleString();
+const fmtM  = v => v == null ? "—" : "$" + (v / 1000000).toFixed(3) + "M";
+const fmtPct = v => v == null ? "—" : (v * 100).toFixed(2) + "%";
 
-// ─── DEFAULT BUDGET (from Apollo SL Detail Dev Budget) ────────────────────────
-const DEFAULT_BUDGET = [
-  {
-    id: "acquisition", label: "Acquisition", color: "#5a3a00",
-    items: [
-      { id: "land_purchase",  label: "Land Purchase Price",    amount: 4400000,    basis: false, note: "" },
-      { id: "closing_costs",  label: "Acquisition Closing Costs", amount: 88000,  basis: false, note: "2% of land" },
-      { id: "extension_fees", label: "Extension / Pursuit Fees",  amount: 0,      basis: false, note: "" },
-    ]
-  },
-  {
-    id: "hard_costs", label: "Hard Costs", color: "#1a3a6b",
-    items: [
-      { id: "hard_residential",  label: "Hard Costs — Residential",    amount: 31200000, basis: true,  note: "" },
-      { id: "hard_parking",      label: "Hard Costs — Parking",        amount: 1500000,  basis: false, note: "Parking removed from basis" },
-      { id: "ffe",               label: "FF&E / GC Exclusions",        amount: 300000,   basis: true,  note: "" },
-      { id: "demolition",        label: "Demolition",                  amount: 50000,    basis: true,  note: "" },
-      { id: "ti_costs",          label: "T/I Costs (community space)", amount: 0,        basis: true,  note: "" },
-      { id: "contingency",       label: "Contingency (Sponsor)",       amount: 1652500,  basis: true,  note: "5% of hard" },
-      { id: "sales_tax",         label: "Sales Tax",                   amount: 3678465,  basis: true,  note: "10.6%" },
-      { id: "pp_bond",           label: "P&P Bond Premium",            amount: 300000,   basis: true,  note: "" },
-    ]
-  },
-  {
-    id: "soft_costs", label: "Soft Costs", color: "#1a6b3c",
-    items: [
-      { id: "architect",        label: "Architecture",                amount: 1175000, basis: true,  note: "" },
-      { id: "engineering",      label: "Engineering (Civil/MEP/Struct/Land)", amount: 600000, basis: true, note: "" },
-      { id: "appraisal",        label: "Appraisal",                   amount: 5000,   basis: true,  note: "" },
-      { id: "market_study",     label: "Market Study",                amount: 4500,   basis: true,  note: "" },
-      { id: "environmental",    label: "Environmental Assessment",    amount: 5000,   basis: true,  note: "" },
-      { id: "geotech",          label: "Geotechnical",                amount: 30000,  basis: true,  note: "" },
-      { id: "survey",           label: "Survey, Topo & Boundary",     amount: 12000,  basis: true,  note: "" },
-      { id: "legal_re",         label: "Legal — Real Estate",         amount: 50000,  basis: true,  note: "" },
-      { id: "proj_mgmt",        label: "Project Management Fees",     amount: 300000, basis: true,  note: "R/P" },
-      { id: "other_consultants",label: "Other Consultants",           amount: 277500, basis: true,  note: "Energy, Green, ADA, Arborist" },
-      { id: "const_mgmt",       label: "Construction Management",     amount: 169365, basis: true,  note: "" },
-      { id: "title_recording",  label: "Title & Recording",           amount: 100000, basis: true,  note: "" },
-      { id: "permits",          label: "Permits, Fees & Hook-Ups",    amount: 1011715,basis: true,  note: "" },
-      { id: "impact_fees",      label: "Impact & Mitigation Fees",    amount: 1300000,basis: true,  note: "" },
-      { id: "other_inspections",label: "Other Inspections & Testing", amount: 100000, basis: true,  note: "" },
-      { id: "soft_contingency", label: "Soft Cost Contingency",       amount: 514008, basis: true,  note: "10%" },
-    ]
-  },
-  {
-    id: "financing", label: "Financing & Legal", color: "#8B2500",
-    items: [
-      { id: "const_orig",       label: "Construction Origination & Fees", amount: 507558, basis: true,  note: "1% of const loan" },
-      { id: "perm_orig",        label: "Perm Origination & Fees",         amount: 340491, basis: false, note: "1% of perm loan" },
-      { id: "const_int",        label: "Construction Period Interest",     amount: 3164218,basis: true,  note: "" },
-      { id: "lease_up_int",     label: "Lease-Up Period Interest",        amount: 1987588, basis: false, note: "" },
-      { id: "wshfc_bond",       label: "WSHFC Bond Related Costs",        amount: 432191, basis: true,  note: "" },
-      { id: "bond_legal",       label: "Bond Legal",                      amount: 85000,  basis: true,  note: "" },
-      { id: "lihtc_issuance",   label: "LIHTC Issuance Fees",             amount: 145825, basis: false, note: "" },
-      { id: "const_lender_3p",  label: "Construction Lender — Third Party Reports", amount: 65000, basis: true, note: "" },
-      { id: "const_legal",      label: "Construction Loan Legal (Dev+Lender)", amount: 75000, basis: true, note: "" },
-      { id: "equity_dd",        label: "Equity DD Fees",                  amount: 50000,  basis: false, note: "" },
-      { id: "perm_legal",       label: "Perm Legal (Dev+Lender)",         amount: 50000,  basis: false, note: "" },
-      { id: "cost_cert",        label: "Cost Certification",              amount: 30000,  basis: true,  note: "" },
-      { id: "loan_guarantor",   label: "Loan Guarantor Fee",              amount: 300000, basis: false, note: "" },
-      { id: "cbo_fees",         label: "CBO Fees / Legal",                amount: 20000,  basis: false, note: "" },
-      { id: "lihtc_legal",      label: "LIHTC Legal (Synd/Dev/Other)",    amount: 50000,  basis: false, note: "" },
-      { id: "trustee",          label: "Trustee / Fiscal (Bonds)",        amount: 37500,  basis: true,  note: "" },
-      { id: "fin_consultant",   label: "Finance Consultant / Credits",    amount: 20000,  basis: false, note: "" },
-    ]
-  },
-  {
-    id: "org_costs", label: "Organizational & Carrying Costs", color: "#555",
-    items: [
-      { id: "op_reserves",      label: "Operating Reserves",             amount: 637500,  basis: false, note: "6 months" },
-      { id: "rep_reserves",     label: "Replacement Reserves",           amount: 61250,   basis: false, note: "$350/unit" },
-      { id: "ads_reserve",      label: "ADS Reserve (6 months DS)",      amount: 1110159, basis: false, note: "" },
-      { id: "working_capital",  label: "Working Capital / Lease-Up",     amount: 159598,  basis: false, note: "3 months" },
-      { id: "entity_legal",     label: "Entity Legal",                   amount: 5000,    basis: true,  note: "" },
-      { id: "const_accounting", label: "Construction Accounting",        amount: 50000,   basis: false, note: "" },
-      { id: "project_audit",    label: "Project Audit",                  amount: 30000,   basis: false, note: "" },
-      { id: "tenant_engagement",label: "Pre-Tenant Engagement",          amount: 68000,   basis: true,  note: "" },
-      { id: "sponsor_donation", label: "Sponsor Donation (Nonprofit)",   amount: 65000,   basis: false, note: "" },
-      { id: "insurance",        label: "Insurance (Development Period)",  amount: 400000,  basis: true,  note: "" },
-      { id: "re_taxes",         label: "RE Taxes During Development",    amount: 50000,   basis: true,  note: "" },
-      { id: "org_other",        label: "Org Other",                      amount: 133000,  basis: true,  note: "" },
-      { id: "dev_utilities",    label: "Development Period Utilities",   amount: 25000,   basis: true,  note: "" },
-    ]
-  },
-  {
-    id: "dev_fee", label: "Developer Fee", color: "#1a3a6b",
-    items: [
-      { id: "dev_fee_cash_closing",    label: "Cash Portion — Closing",    amount: 729852,  basis: true,  note: "25% of cash fee" },
-      { id: "dev_fee_cash_completion", label: "Cash Portion — Completion", amount: 729852,  basis: true,  note: "25% of cash fee" },
-      { id: "dev_fee_cash_conversion", label: "Cash Portion — Conversion", amount: 1459704, basis: true,  note: "50% of cash fee" },
-      { id: "dev_fee_deferred",        label: "Deferred Developer Fee",    amount: 5927282, basis: true,  note: "" },
-    ]
-  },
-];
+let _id = 200;
+const mkId = () => ++_id;
 
-// ─── LINE ITEM ROW ─────────────────────────────────────────────────────────────
-function LineItemRow({ item, catColor, onUpdate, onRemove, showNotes }) {
-  const [editAmt, setEditAmt] = useState(false);
-  const [amt, setAmt] = useState(item.amount);
+// ─────────────────────────────────────────────────────────────────────────────
+// DEFAULT STATE — Apollo SL calibrated
+// ─────────────────────────────────────────────────────────────────────────────
+const DEFAULT_ASSUMPTIONS = {
+  hc_contingency_pct:   0.05,
+  sales_tax_pct:        0.106,
+  sc_contingency_pct:   0.10,
+  dev_fee_pct:          0.15,
+  cash_fee_pct:         0.33,
+  const_origination_pct: 0.01,
+  perm_origination_pct:  0.01,
+  // These will come from Debt module eventually
+  const_loan_amount:    32941402,
+  perm_loan_amount:     34049115,
+  // Construction interest estimates (overwritten by Module 2B)
+  const_interest_est:   3164218,
+  leaseup_interest_est: 1987588,
+};
+
+const DEFAULT_SECTIONS = {
+  acquisition: [
+    { id: 1,  label: "Land Purchase Price",     amount: 4400000,  in_basis: false, type: "input",   pct_value: null, notes: "",                    is_locked: true  },
+    { id: 2,  label: "Closing Costs",           amount: 88000,    in_basis: false, type: "input",   pct_value: null, notes: "2% of land",          is_locked: false },
+    { id: 3,  label: "Extension Fees",          amount: 0,        in_basis: false, type: "input",   pct_value: null, notes: "",                    is_locked: false },
+  ],
+  hard_costs: [
+    { id: 10, label: "Residential Construction", amount: 31200000, in_basis: true,  type: "input",   pct_value: null, notes: "Per GC pricing",      is_locked: true  },
+    { id: 11, label: "Parking / Structured",     amount: 1500000,  in_basis: false, type: "input",   pct_value: null, notes: "Not in basis per WSHFC", is_locked: false },
+    { id: 12, label: "FF&E / GC Exclusions",     amount: 300000,   in_basis: true,  type: "input",   pct_value: null, notes: "",                    is_locked: false },
+    { id: 13, label: "Demolition",               amount: 50000,    in_basis: true,  type: "input",   pct_value: null, notes: "Estimate, GC feedback needed", is_locked: false },
+    { id: 14, label: "Site Work / Infrastructure", amount: 0,      in_basis: true,  type: "input",   pct_value: null, notes: "",                    is_locked: false },
+    { id: 15, label: "P&P Bond Premium",         amount: 300000,   in_basis: true,  type: "input",   pct_value: null, notes: "",                    is_locked: false },
+    { id: 16, label: "Contingency",              amount: null,     in_basis: true,  type: "pct_hc",  pct_value: null, notes: "% of HC subtotal",    is_locked: true  },
+    { id: 17, label: "Sales Tax",                amount: null,     in_basis: true,  type: "pct_hc",  pct_value: null, notes: "% of HC subtotal",    is_locked: true  },
+  ],
+  soft_costs: [
+    { id: 30, label: "Architecture & Design",    amount: 1175000,  in_basis: true,  type: "input",   pct_value: null, notes: "",                    is_locked: false },
+    { id: 31, label: "Engineering",              amount: 600000,   in_basis: true,  type: "input",   pct_value: null, notes: "Civil, MEP, Structural, Landscape", is_locked: false },
+    { id: 32, label: "Permits, Fees & Hook-Ups", amount: 1011715,  in_basis: true,  type: "input",   pct_value: null, notes: "",                    is_locked: false },
+    { id: 33, label: "Impact & Mitigation Fees", amount: 1300000,  in_basis: true,  type: "input",   pct_value: null, notes: "",                    is_locked: false },
+    { id: 34, label: "Environmental / Geotech",  amount: 35000,    in_basis: true,  type: "input",   pct_value: null, notes: "",                    is_locked: false },
+    { id: 35, label: "Survey, Topo & Boundary",  amount: 12000,    in_basis: true,  type: "input",   pct_value: null, notes: "",                    is_locked: false },
+    { id: 36, label: "Legal — Real Estate",      amount: 50000,    in_basis: true,  type: "input",   pct_value: null, notes: "",                    is_locked: false },
+    { id: 37, label: "Market Study",             amount: 4500,     in_basis: true,  type: "input",   pct_value: null, notes: "",                    is_locked: false },
+    { id: 38, label: "Appraisal",                amount: 5000,     in_basis: true,  type: "input",   pct_value: null, notes: "",                    is_locked: false },
+    { id: 39, label: "Other Consultants",        amount: 277500,   in_basis: true,  type: "input",   pct_value: null, notes: "Energy modeler, Green, ADA, Architect of Record", is_locked: false },
+    { id: 40, label: "Project Management",       amount: 300000,   in_basis: true,  type: "input",   pct_value: null, notes: "R/P",                  is_locked: false },
+    { id: 41, label: "Construction Management",  amount: 169365,   in_basis: true,  type: "input",   pct_value: null, notes: "",                    is_locked: false },
+    { id: 42, label: "Title & Recording",        amount: 100000,   in_basis: true,  type: "input",   pct_value: null, notes: "",                    is_locked: false },
+    { id: 43, label: "Other Inspections & Testing", amount: 100000, in_basis: true, type: "input",   pct_value: null, notes: "",                    is_locked: false },
+    { id: 44, label: "Soft Cost Contingency",    amount: null,     in_basis: true,  type: "pct_sc",  pct_value: null, notes: "% of SC subtotal",    is_locked: true  },
+  ],
+  financing: [
+    { id: 60, label: "Construction Origination & Fees", amount: null, in_basis: true,  type: "pct_loan_const", pct_value: null, notes: "% of construction loan", is_locked: true  },
+    { id: 61, label: "Perm Loan Origination",           amount: null, in_basis: false, type: "pct_loan_perm",  pct_value: null, notes: "% of perm loan",         is_locked: true  },
+    { id: 62, label: "Construction Interest",           amount: null, in_basis: true,  type: "est_2b",         pct_value: null, notes: "Estimated — Module 2B will calculate", is_locked: true  },
+    { id: 63, label: "Lease-Up Interest",               amount: null, in_basis: false, type: "est_2b",         pct_value: null, notes: "Estimated — Module 2B will calculate", is_locked: true  },
+    { id: 64, label: "WSHFC Bond Related Costs",        amount: 432191, in_basis: true,  type: "input",        pct_value: null, notes: "",                    is_locked: false },
+    { id: 65, label: "Bond Legal (Pacifica)",           amount: 85000,  in_basis: true,  type: "input",        pct_value: null, notes: "",                    is_locked: false },
+    { id: 66, label: "Construction Loan Legal",         amount: 140000, in_basis: true,  type: "input",        pct_value: null, notes: "Dev + Lender",         is_locked: false },
+    { id: 67, label: "Equity DD Fees",                  amount: 50000,  in_basis: true,  type: "input",        pct_value: null, notes: "",                    is_locked: false },
+    { id: 68, label: "LIHTC Issuance Fee",              amount: 145825, in_basis: false, type: "input",        pct_value: null, notes: "",                    is_locked: false },
+    { id: 69, label: "LIHTC Legal & Syndication",       amount: 50000,  in_basis: false, type: "input",        pct_value: null, notes: "",                    is_locked: false },
+    { id: 70, label: "Cost Certification",              amount: 30000,  in_basis: true,  type: "input",        pct_value: null, notes: "",                    is_locked: false },
+    { id: 71, label: "Perm Closing Legal",              amount: 50000,  in_basis: false, type: "input",        pct_value: null, notes: "Dev + Lender",         is_locked: false },
+    { id: 72, label: "Loan Guarantor Fee",              amount: 300000, in_basis: false, type: "input",        pct_value: null, notes: "",                    is_locked: false },
+    { id: 73, label: "Finance Consultant / Credits",    amount: 20000,  in_basis: false, type: "input",        pct_value: null, notes: "",                    is_locked: false },
+    { id: 74, label: "CBO Fees / Legal",                amount: 20000,  in_basis: false, type: "input",        pct_value: null, notes: "",                    is_locked: false },
+    { id: 75, label: "Trustee / Fiscal (Bonds)",        amount: 37500,  in_basis: true,  type: "input",        pct_value: null, notes: "",                    is_locked: false },
+  ],
+  org_reserves: [
+    { id: 90, label: "Operating Reserves",       amount: null,    in_basis: false, type: "calc_opres",  pct_value: null, notes: "6 months NOI",        is_locked: false },
+    { id: 91, label: "Replacement Reserves",     amount: null,    in_basis: false, type: "calc_repres", pct_value: null, notes: "$350/unit",            is_locked: false },
+    { id: 92, label: "ADS Reserve",              amount: null,    in_basis: false, type: "calc_adsres", pct_value: null, notes: "6 months debt service", is_locked: false },
+    { id: 93, label: "Construction Insurance",   amount: 400000,  in_basis: true,  type: "input",       pct_value: null, notes: "Confirm with broker",  is_locked: false },
+    { id: 94, label: "Real Estate Taxes",        amount: 50000,   in_basis: true,  type: "input",       pct_value: null, notes: "During construction",  is_locked: false },
+    { id: 95, label: "Pre-Tenant Engagement",    amount: 68000,   in_basis: true,  type: "input",       pct_value: null, notes: "4.5.3.1 requirement",  is_locked: false },
+    { id: 96, label: "Working Capital / Lease-Up", amount: 159598, in_basis: false, type: "input",      pct_value: null, notes: "3 months key costs",   is_locked: false },
+    { id: 97, label: "Construction Accounting",  amount: 50000,   in_basis: false, type: "input",       pct_value: null, notes: "",                    is_locked: false },
+    { id: 98, label: "Project Audit",            amount: 30000,   in_basis: false, type: "input",       pct_value: null, notes: "",                    is_locked: false },
+    { id: 99, label: "Entity Legal",             amount: 5000,    in_basis: true,  type: "input",       pct_value: null, notes: "",                    is_locked: false },
+    { id: 100,label: "Sponsor Donation",         amount: 65000,   in_basis: false, type: "input",       pct_value: null, notes: "Non-profit",           is_locked: false },
+    { id: 101,label: "Dev Period Utilities",     amount: 25000,   in_basis: true,  type: "input",       pct_value: null, notes: "",                    is_locked: false },
+    { id: 102,label: "Org Other",                amount: 133000,  in_basis: true,  type: "input",       pct_value: null, notes: "Confirm",              is_locked: false },
+  ],
+};
+
+const SECTION_CONFIG = {
+  acquisition:  { label: "Acquisition",           color: "#1a3a6b" },
+  hard_costs:   { label: "Hard Costs",             color: "#8B2500" },
+  soft_costs:   { label: "Soft Costs",             color: "#1a6b3c" },
+  financing:    { label: "Financing & Legal",      color: "#5a3a00" },
+  org_reserves: { label: "Org Costs & Reserves",   color: "#4a1a6b" },
+};
+
+const TYPE_LABELS = {
+  input:          "",
+  pct_hc:         "% HC",
+  pct_sc:         "% SC",
+  pct_loan_const: "% CL",
+  pct_loan_perm:  "% PL",
+  est_2b:         "est.",
+  calc_opres:     "calc",
+  calc_repres:    "calc",
+  calc_adsres:    "calc",
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CALCULATION ENGINE
+// ─────────────────────────────────────────────────────────────────────────────
+function computeBudget(sections, assumptions, totalUnits, noi, ads) {
+  const a = assumptions;
+
+  // Hard cost subtotal (input lines only, before calculated lines)
+  const hcInputs = sections.hard_costs
+    .filter(l => l.type === "input")
+    .reduce((s, l) => s + (l.amount || 0), 0);
+  const contingency = hcInputs * a.hc_contingency_pct;
+  const salesTax    = hcInputs * a.sales_tax_pct;
+  const hcTotal     = hcInputs + contingency + salesTax;
+
+  // Soft cost subtotal (input lines only, before contingency)
+  const scInputs    = sections.soft_costs
+    .filter(l => l.type === "input")
+    .reduce((s, l) => s + (l.amount || 0), 0);
+  const scContingency = scInputs * a.sc_contingency_pct;
+  const scTotal     = scInputs + scContingency;
+
+  // Financing calculated lines
+  const constOrigination = a.const_loan_amount * a.const_origination_pct;
+  const permOrigination  = a.perm_loan_amount  * a.perm_origination_pct;
+  const constInterest    = a.const_interest_est;
+  const leaseupInterest  = a.leaseup_interest_est;
+
+  const finInputs = sections.financing
+    .filter(l => l.type === "input")
+    .reduce((s, l) => s + (l.amount || 0), 0);
+  const finTotal  = finInputs + constOrigination + permOrigination + constInterest + leaseupInterest;
+
+  // Org / reserves calculated lines
+  const opRes  = noi   ? noi / 2   : 637500;   // 6 months NOI
+  const repRes = totalUnits ? totalUnits * 350  : 61250;    // $350/unit
+  const adsRes = ads   ? ads / 2   : 1110159;  // 6 months ADS
+
+  const orgInputs = sections.org_reserves
+    .filter(l => l.type === "input")
+    .reduce((s, l) => s + (l.amount || 0), 0);
+  const orgTotal  = orgInputs + opRes + repRes + adsRes;
+
+  // Acquisition
+  const acqTotal = sections.acquisition
+    .reduce((s, l) => s + (l.amount || 0), 0);
+
+  // Subtotal before dev fee
+  const subtotal = acqTotal + hcTotal + scTotal + finTotal + orgTotal;
+
+  // Developer fee
+  const devFeeTotal    = subtotal * a.dev_fee_pct / (1 - a.dev_fee_pct); // fee on top of costs
+  const devFeeCash     = devFeeTotal * a.cash_fee_pct;
+  const devFeeDeferred = devFeeTotal * (1 - a.cash_fee_pct);
+  const tdc            = subtotal + devFeeTotal;
+
+  // Eligible basis — everything in_basis, excluding land, perm loan items, dev fee treatment
+  const basisFromSections = Object.entries(sections).reduce((total, [, items]) => {
+    return total + items.reduce((s, l) => {
+      if (!l.in_basis) return s;
+      const amt = resolveAmount(l, { hcInputs, scInputs, constOrigination, permOrigination, constInterest, leaseupInterest, opRes, repRes, adsRes });
+      return s + amt;
+    }, 0);
+  }, 0);
+  const eligibleBasis = basisFromSections + devFeeTotal; // dev fee is in basis
+
+  return {
+    acqTotal,
+    hcInputs, contingency, salesTax, hcTotal,
+    scInputs, scContingency, scTotal,
+    constOrigination, permOrigination, constInterest, leaseupInterest, finTotal,
+    opRes, repRes, adsRes, orgInputs, orgTotal,
+    subtotal,
+    devFeeTotal, devFeeCash, devFeeDeferred,
+    tdc, eligibleBasis,
+  };
+}
+
+// Resolve the actual dollar amount of a line item given calculated values
+function resolveAmount(line, calcs) {
+  switch (line.type) {
+    case "input":          return line.amount || 0;
+    case "pct_hc":         return line.label.toLowerCase().includes("tax") ? calcs.salesTax : calcs.contingency;
+    case "pct_sc":         return calcs.scContingency;
+    case "pct_loan_const": return calcs.constOrigination;
+    case "pct_loan_perm":  return calcs.permOrigination;
+    case "est_2b":         return line.label.toLowerCase().includes("lease") ? calcs.leaseupInterest : calcs.constInterest;
+    case "calc_opres":     return calcs.opRes;
+    case "calc_repres":    return calcs.repRes;
+    case "calc_adsres":    return calcs.adsRes;
+    default:               return line.amount || 0;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// COMPONENTS
+// ─────────────────────────────────────────────────────────────────────────────
+function AssumptionsBar({ assumptions, onUpdate }) {
+  const a = assumptions;
+  const fieldStyle = { display:"flex", flexDirection:"column", gap:2 };
+  const labelStyle = { fontSize:8, color:"#aaa", textTransform:"uppercase", letterSpacing:"0.06em" };
+  const inputStyle = {
+    background:"#f8f8f8", border:"1px solid #e0e0e0", borderRadius:3,
+    padding:"4px 7px", fontSize:10, fontFamily:"Inter, sans-serif",
+    color:"#111", outline:"none", width:72, textAlign:"center",
+  };
+
+  const fields = [
+    { key:"hc_contingency_pct",   label:"HC Cont. %",    pct:true  },
+    { key:"sales_tax_pct",        label:"Sales Tax %",   pct:true  },
+    { key:"sc_contingency_pct",   label:"SC Cont. %",    pct:true  },
+    { key:"dev_fee_pct",          label:"Dev Fee %",     pct:true  },
+    { key:"cash_fee_pct",         label:"Cash Fee %",    pct:true  },
+    { key:"const_origination_pct",label:"CL Orig. %",    pct:true  },
+    { key:"perm_origination_pct", label:"Perm Orig. %",  pct:true  },
+    { key:"const_loan_amount",    label:"Const. Loan $", pct:false },
+    { key:"perm_loan_amount",     label:"Perm Loan $",   pct:false },
+  ];
 
   return (
-    <tr style={{ borderBottom: "1px solid #f5f5f5" }}>
-      {/* Basis toggle */}
-      <td style={{ padding: "5px 8px", textAlign: "center", width: 64 }}>
-        <button
-          onClick={() => onUpdate("basis", !item.basis)}
-          title={item.basis ? "Click to mark NOT in basis" : "Click to mark IN basis"}
-          style={{
-            padding: "2px 7px", borderRadius: 2, border: "none", cursor: "pointer",
-            fontSize: 9, fontWeight: 700, letterSpacing: "0.04em",
-            background: item.basis ? "#e8f4ee" : "#f5f5f5",
-            color: item.basis ? "#1a6b3c" : "#bbb",
-          }}>
-          {item.basis ? "BASIS" : "NO"}
-        </button>
-      </td>
-      {/* Line item label */}
-      <td style={{ padding: "5px 10px" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          {item.calcType === "calc" && (
-            <span style={{
-              fontSize: 8, padding: "1px 5px", borderRadius: 2, border: "1px solid #c47a3a",
-              color: "#c47a3a", background: "#fdf8f0", fontWeight: 700, letterSpacing: "0.05em",
-              flexShrink: 0, whiteSpace: "nowrap",
-            }} title={`Calculated: ${item.calcKey || ""}`}>CALC</span>
-          )}
-          <input
-            value={item.label}
-            onChange={e => onUpdate("label", e.target.value)}
-            readOnly={item.calcType === "calc"}
-            style={{
-              flex: 1, background: "transparent", border: "none",
-              fontSize: 11, fontFamily: "'DM Mono',monospace",
-              color: item.calcType === "calc" ? "#888" : "#333",
-              outline: "none", padding: 0, cursor: item.calcType === "calc" ? "default" : "text",
-            }}
-          />
+    <div style={{ background:"#f8f9fc", border:"1px solid #e0e8f4", borderRadius:6, padding:"10px 16px", marginBottom:16 }}>
+      <div style={{ fontSize:8, fontWeight:700, color:"#1a3a6b", textTransform:"uppercase", letterSpacing:"0.08em", marginBottom:8 }}>
+        Budget Assumptions
+      </div>
+      <div style={{ display:"flex", gap:12, flexWrap:"wrap" }}>
+        {fields.map(f => (
+          <div key={f.key} style={fieldStyle}>
+            <span style={labelStyle}>{f.label}</span>
+            <input
+              type="number"
+              value={f.pct ? +(a[f.key] * 100).toFixed(3) : a[f.key]}
+              step={f.pct ? 0.1 : 10000}
+              onChange={e => onUpdate({ [f.key]: f.pct ? Number(e.target.value) / 100 : Number(e.target.value) })}
+              style={inputStyle}
+            />
+          </div>
+        ))}
+        <div style={{ ...fieldStyle, justifyContent:"flex-end" }}>
+          <span style={labelStyle}>Int. Estimate (con)</span>
+          <input type="number" value={a.const_interest_est} step={10000}
+            onChange={e => onUpdate({ const_interest_est: Number(e.target.value) })}
+            style={{ ...inputStyle, color:"#5a3a00" }} />
         </div>
+        <div style={fieldStyle}>
+          <span style={labelStyle}>Int. Estimate (L/U)</span>
+          <input type="number" value={a.leaseup_interest_est} step={10000}
+            onChange={e => onUpdate({ leaseup_interest_est: Number(e.target.value) })}
+            style={{ ...inputStyle, color:"#5a3a00" }} />
+        </div>
+      </div>
+      <div style={{ fontSize:8, color:"#aaa", marginTop:6 }}>
+        Construction and lease-up interest are estimates — Module 2B (Construction Cash Flow) will calculate actuals.
+      </div>
+    </div>
+  );
+}
+
+function LineRow({ line, resolvedAmount, totalUnits, onUpdate, onRemove, color }) {
+  const perUnit = totalUnits > 0 ? resolvedAmount / totalUnits : null;
+  const isCalc  = line.type !== "input";
+  const is2B    = line.type === "est_2b";
+  const typeTag = TYPE_LABELS[line.type];
+
+  return (
+    <tr style={{ borderBottom:"1px solid #f5f5f5" }}>
+      {/* Label */}
+      <td style={{ padding:"5px 10px", paddingLeft:24 }}>
+        <input
+          value={line.label}
+          onChange={e => onUpdate({ label: e.target.value })}
+          style={{ background:"transparent", border:"none", outline:"none", fontSize:11, fontFamily:"Inter, sans-serif", color:"#111", width:"100%" }}
+        />
       </td>
       {/* Amount */}
-      <td style={{ padding: "5px 8px", textAlign: "right", width: 130 }}>
-        {item.calcType === "calc" ? (
-          <span style={{
-            fontFamily: "'DM Mono',monospace", fontSize: 11,
-            color: "#c47a3a", fontStyle: "italic",
-          }} title="Amount computed by calculation engine">
-            {item.amount ? fmt$(item.amount) : "— pending"}
+      <td style={{ padding:"5px 10px", textAlign:"right", minWidth:110 }}>
+        {isCalc ? (
+          <span style={{ fontSize:11, color: is2B ? "#5a3a00" : "#666" }}>
+            {fmt$(resolvedAmount)}
+            {typeTag && (
+              <span style={{ fontSize:8, color: is2B ? "#c47a3a" : "#aaa", marginLeft:5, fontWeight:600,
+                background: is2B ? "#fdf8f0" : "#f5f5f5", border: `1px solid ${is2B ? "#e8d9b8" : "#e0e0e0"}`,
+                borderRadius:3, padding:"1px 4px" }}>
+                {typeTag}
+              </span>
+            )}
           </span>
-        ) : editAmt ? (
+        ) : (
           <input
             type="number"
-            value={amt}
-            autoFocus
-            onChange={e => setAmt(Number(e.target.value))}
-            onBlur={() => { onUpdate("amount", amt); setEditAmt(false); }}
-            onKeyDown={e => { if (e.key === "Enter") { onUpdate("amount", amt); setEditAmt(false); } }}
-            style={{
-              width: 120, padding: "2px 6px", border: "1px solid #1a3a6b", borderRadius: 2,
-              fontSize: 11, fontFamily: "'DM Mono',monospace", textAlign: "right", outline: "none",
-            }}
+            value={line.amount ?? ""}
+            onChange={e => onUpdate({ amount: e.target.value === "" ? 0 : Number(e.target.value) })}
+            style={{ background:"transparent", border:"none", borderBottom:"1px solid transparent", outline:"none",
+              fontSize:11, fontFamily:"Inter, sans-serif", color:"#111", textAlign:"right", width:110,
+              padding:"2px 4px" }}
+            onFocus={e => e.target.style.borderBottomColor = color}
+            onBlur={e => e.target.style.borderBottomColor = "transparent"}
           />
-        ) : (
-          <span
-            onClick={() => { setAmt(item.amount); setEditAmt(true); }}
-            style={{
-              cursor: "text", fontFamily: "'DM Mono',monospace", fontSize: 11,
-              color: item.amount ? "#111" : "#ccc",
-              borderBottom: "1px dashed #e0e0e0", paddingBottom: 1,
-            }}>
-            {item.amount ? fmt$(item.amount) : "—"}
-          </span>
         )}
       </td>
-      {/* Note */}
-      {showNotes && (
-        <td style={{ padding: "5px 8px", width: 180 }}>
-          <input
-            value={item.note || ""}
-            onChange={e => onUpdate("note", e.target.value)}
-            placeholder="note..."
-            style={{
-              width: "100%", background: "transparent", border: "none",
-              fontSize: 10, fontFamily: "'DM Mono',monospace", color: "#aaa",
-              outline: "none", padding: 0, fontStyle: "italic",
-            }}
-          />
-        </td>
-      )}
-      {/* Remove */}
-      <td style={{ padding: "5px 8px", textAlign: "center", width: 24 }}>
-        <button onClick={onRemove}
-          style={{ background: "none", border: "none", cursor: "pointer", color: "#ddd", fontSize: 12 }}>
-          ✕
-        </button>
+      {/* $/unit */}
+      <td style={{ padding:"5px 8px", textAlign:"right", minWidth:70 }}>
+        <span style={{ fontSize:9, color:"#bbb" }}>
+          {perUnit != null && perUnit > 0 ? fmt$(Math.round(perUnit)) : ""}
+        </span>
+      </td>
+      {/* In Basis */}
+      <td style={{ padding:"5px 10px", textAlign:"center", minWidth:60 }}>
+        <input
+          type="checkbox"
+          checked={line.in_basis}
+          onChange={e => onUpdate({ in_basis: e.target.checked })}
+          style={{ cursor:"pointer", accentColor: color }}
+        />
+      </td>
+      {/* Notes */}
+      <td style={{ padding:"5px 8px" }}>
+        <input
+          value={line.notes || ""}
+          onChange={e => onUpdate({ notes: e.target.value })}
+          placeholder="notes"
+          style={{ background:"transparent", border:"none", outline:"none", fontSize:10, fontFamily:"Inter, sans-serif",
+            color:"#aaa", width:"100%" }}
+        />
+      </td>
+      {/* Actions */}
+      <td style={{ padding:"5px 6px", textAlign:"right", whiteSpace:"nowrap" }}>
+        {!line.is_locked && (
+          <button onClick={onRemove}
+            style={{ background:"none", border:"none", cursor:"pointer", color:"#ddd", fontSize:11, padding:"2px 3px" }}
+            onMouseEnter={e => e.target.style.color="#8B2500"}
+            onMouseLeave={e => e.target.style.color="#ddd"}>✕</button>
+        )}
       </td>
     </tr>
   );
 }
 
-// ─── CATEGORY SECTION ─────────────────────────────────────────────────────────
-function CategorySection({ cat, onUpdateItem, onRemoveItem, onAddItem, showNotes, collapsed, onToggle }) {
-  const total = cat.items.reduce((s, i) => s + (i.amount || 0), 0);
-  const basisTotal = cat.items.filter(i => i.basis).reduce((s, i) => s + (i.amount || 0), 0);
-  const nonBasisTotal = total - basisTotal;
-  const nextId = () => cat.id + "_" + Date.now();
+function BudgetSection({ sectionKey, lines, sectionTotal, basisTotal, totalUnits, calcs, onUpdateLine, onRemoveLine, onAddLine, color, label }) {
+  const [collapsed, setCollapsed] = useState(false);
 
   return (
-    <div style={{ marginBottom: 2 }}>
-      {/* Category header */}
+    <div style={{ marginBottom:4 }}>
+      {/* Section header */}
       <div
-        onClick={onToggle}
-        style={{
-          display: "flex", alignItems: "center", justifyContent: "space-between",
-          padding: "8px 12px", cursor: "pointer", userSelect: "none",
-          background: cat.color + "10",
-          borderLeft: `4px solid ${cat.color}`,
-          borderBottom: "1px solid #e8e8e8",
-        }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <span style={{ fontSize: 9, color: "#aaa" }}>{collapsed ? "▶" : "▼"}</span>
-          <span style={{ fontSize: 11, fontWeight: 700, color: cat.color, fontFamily: "'DM Mono',monospace",
-            textTransform: "uppercase", letterSpacing: "0.07em" }}>{cat.label}</span>
-          <span style={{ fontSize: 9, color: "#bbb" }}>{cat.items.length} items</span>
+        onClick={() => setCollapsed(v => !v)}
+        style={{ display:"flex", justifyContent:"space-between", alignItems:"center",
+          padding:"8px 12px", background:color, color:"white", cursor:"pointer",
+          borderRadius: collapsed ? 6 : "6px 6px 0 0" }}>
+        <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+          <span style={{ fontSize:9, fontWeight:700, letterSpacing:"0.12em", textTransform:"uppercase" }}>
+            {collapsed ? "▸" : "▾"} {label}
+          </span>
         </div>
-        <div style={{ display: "flex", gap: 20, alignItems: "center" }}>
-          <div style={{ textAlign: "right" }}>
-            <div style={{ fontSize: 9, color: "#aaa", textTransform: "uppercase", letterSpacing: "0.05em" }}>In Basis</div>
-            <div style={{ fontSize: 11, fontWeight: 700, color: "#1a6b3c", fontFamily: "'DM Mono',monospace" }}>
-              {fmt$(basisTotal)}
-            </div>
-          </div>
-          <div style={{ textAlign: "right" }}>
-            <div style={{ fontSize: 9, color: "#aaa", textTransform: "uppercase", letterSpacing: "0.05em" }}>Not Basis</div>
-            <div style={{ fontSize: 11, fontWeight: 500, color: "#888", fontFamily: "'DM Mono',monospace" }}>
-              {fmt$(nonBasisTotal)}
-            </div>
-          </div>
-          <div style={{ textAlign: "right" }}>
-            <div style={{ fontSize: 9, color: "#aaa", textTransform: "uppercase", letterSpacing: "0.05em" }}>Total</div>
-            <div style={{ fontSize: 12, fontWeight: 700, color: cat.color, fontFamily: "'DM Mono',monospace" }}>
-              {fmtM(total)}
-            </div>
-          </div>
+        <div style={{ display:"flex", gap:20, alignItems:"center" }}>
+          <span style={{ fontSize:10 }}>
+            <span style={{ opacity:0.65, fontSize:8, marginRight:4 }}>TOTAL</span>
+            {fmtM(sectionTotal)}
+          </span>
+          <span style={{ fontSize:10 }}>
+            <span style={{ opacity:0.65, fontSize:8, marginRight:4 }}>IN BASIS</span>
+            {fmtM(basisTotal)}
+          </span>
         </div>
       </div>
 
-      {/* Line items */}
       {!collapsed && (
-        <div>
-          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+        <div style={{ background:"white", border:"1px solid #e0e0e0", borderTop:"none", borderRadius:"0 0 6px 6px", overflowX:"auto" }}>
+          <table style={{ width:"100%", borderCollapse:"collapse", fontSize:11, fontFamily:"Inter, sans-serif" }}>
+            <colgroup>
+              <col style={{ minWidth:200 }} />
+              <col style={{ width:130 }} />
+              <col style={{ width:80 }} />
+              <col style={{ width:70 }} />
+              <col />
+              <col style={{ width:40 }} />
+            </colgroup>
             <tbody>
-              {cat.items.map(item => (
-                <LineItemRow
-                  key={item.id}
-                  item={item}
-                  catColor={cat.color}
-                  showNotes={showNotes}
-                  onUpdate={(field, val) => onUpdateItem(cat.id, item.id, field, val)}
-                  onRemove={() => onRemoveItem(cat.id, item.id)}
-                />
-              ))}
+              {lines.map(line => {
+                const resolvedAmount = resolveAmount(line, calcs);
+                const basisAmt = line.in_basis ? resolvedAmount : 0;
+                return (
+                  <LineRow
+                    key={line.id}
+                    line={line}
+                    resolvedAmount={resolvedAmount}
+                    totalUnits={totalUnits}
+                    color={color}
+                    onUpdate={patch => onUpdateLine(sectionKey, line.id, patch)}
+                    onRemove={() => onRemoveLine(sectionKey, line.id)}
+                  />
+                );
+              })}
             </tbody>
           </table>
-          <div style={{ padding: "5px 10px", borderBottom: "1px solid #f0f0f0" }}>
+          <div style={{ padding:"6px 12px" }}>
             <button
-              onClick={() => onAddItem(cat.id, { id: nextId(), label: "New Line Item", amount: 0, basis: true, note: "" })}
-              style={{
-                background: "none", border: "none", cursor: "pointer",
-                fontSize: 9, color: "#bbb", letterSpacing: "0.07em", textTransform: "uppercase",
-                fontFamily: "'DM Mono',monospace",
-              }}>
-              + Add Line Item
+              onClick={() => onAddLine(sectionKey)}
+              style={{ background:"none", border:"1px dashed #ccc", borderRadius:3, padding:"3px 10px",
+                fontSize:9, color:"#aaa", cursor:"pointer", fontFamily:"Inter, sans-serif",
+                letterSpacing:"0.06em", textTransform:"uppercase" }}
+              onMouseEnter={e => { e.target.style.borderColor=color; e.target.style.color=color; }}
+              onMouseLeave={e => { e.target.style.borderColor="#ccc"; e.target.style.color="#aaa"; }}>
+              + Add Line
             </button>
           </div>
         </div>
@@ -293,458 +431,180 @@ function CategorySection({ cat, onUpdateItem, onRemoveItem, onAddItem, showNotes
   );
 }
 
-// ─── ASSUMPTIONS PANEL ────────────────────────────────────────────────────────
-function AssumptionsPanel({ assumptions, onChange }) {
-  const fmtVal = (f, v) => {
-    if (f.type === "bool") return v ? "ON" : "OFF";
-    if (f.type === "pct")  return (Number(v) * 100).toFixed(f.step < 0.001 ? 3 : f.step < 0.01 ? 2 : 1) + "%";
-    return String(v);
+// ─────────────────────────────────────────────────────────────────────────────
+// MAIN PANEL
+// ─────────────────────────────────────────────────────────────────────────────
+export default function DevBudgetPanel({ onBudgetUpdate }) {
+  const { moduleStates, updateModule } = useLihtc();
+
+  const assumptions = moduleStates.budget?.assumptions ?? DEFAULT_ASSUMPTIONS;
+  const sections    = moduleStates.budget?.sections    ?? DEFAULT_SECTIONS;
+
+  // Total units from Unit Mix module
+  const unitMixRows = moduleStates.unit_mix?.rows ?? [];
+  const totalUnits  = unitMixRows.reduce((s, r) => s + (r.count || 0), 0) || 175;
+
+  // NOI and ADS from other modules (placeholders until wired)
+  const noi = moduleStates.unit_mix ? null : null; // will wire when proforma exists
+  const ads = null;
+
+  // Compute everything
+  const calcs = computeBudget(sections, assumptions, totalUnits, noi, ads);
+
+  // Writers
+  const updateAssumptions = useCallback((patch) => {
+    updateModule("budget", { assumptions: { ...assumptions, ...patch } });
+  }, [assumptions, updateModule]);
+
+  const updateLine = useCallback((sectionKey, lineId, patch) => {
+    const updated = sections[sectionKey].map(l => l.id === lineId ? { ...l, ...patch } : l);
+    updateModule("budget", { sections: { ...sections, [sectionKey]: updated } });
+  }, [sections, updateModule]);
+
+  const removeLine = useCallback((sectionKey, lineId) => {
+    const updated = sections[sectionKey].filter(l => l.id !== lineId);
+    updateModule("budget", { sections: { ...sections, [sectionKey]: updated } });
+  }, [sections, updateModule]);
+
+  const addLine = useCallback((sectionKey) => {
+    const newLine = { id: mkId(), label: "New Line Item", amount: 0, in_basis: true, type: "input", pct_value: null, notes: "", is_locked: false };
+    updateModule("budget", { sections: { ...sections, [sectionKey]: [...sections[sectionKey], newLine] } });
+  }, [sections, updateModule]);
+
+  // Section totals
+  const getSectionTotals = (sectionKey) => {
+    const items = sections[sectionKey];
+    let total = 0, basis = 0;
+    items.forEach(l => {
+      const amt = resolveAmount(l, calcs);
+      total += amt;
+      if (l.in_basis) basis += amt;
+    });
+    return { total, basis };
   };
 
-  return (
-    <div style={{ background: "white", border: "1px solid #e0e0e0", borderRadius: 6, padding: "14px 16px" }}>
-      <div style={{ fontSize: 8, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase",
-        color: "#888", marginBottom: 12 }}>Calc Assumptions</div>
-      {ASSUMP_GROUPS.map(group => (
-        <div key={group.key} style={{ marginBottom: 12 }}>
-          <div style={{ fontSize: 8, color: group.color, fontWeight: 700, letterSpacing: "0.08em",
-            textTransform: "uppercase", marginBottom: 6, borderBottom: `1px solid ${group.color}22`,
-            paddingBottom: 3 }}>{group.label}</div>
-          {ASSUMP_FIELDS.filter(f => f.group === group.key).map(f => {
-            const v = assumptions[f.key] ?? (f.type === "bool" ? false : f.min ?? 0);
-            return (
-              <div key={f.key} style={{ display: "flex", justifyContent: "space-between",
-                alignItems: "center", marginBottom: 5 }}>
-                <span style={{ fontSize: 10, color: "#666" }}>{f.label}</span>
-                <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                  {f.type === "bool" ? (
-                    <button onClick={() => onChange(f.key, !v)}
-                      style={{ padding: "1px 8px", borderRadius: 2, border: "none", cursor: "pointer",
-                        fontSize: 9, fontWeight: 700, background: v ? "#e8f4ee" : "#f5f5f5",
-                        color: v ? "#1a6b3c" : "#bbb" }}>
-                      {v ? "ON" : "OFF"}
-                    </button>
-                  ) : (
-                    <>
-                      <button onClick={() => onChange(f.key, Math.max(f.min ?? -Infinity, Number((Number(v) - f.step).toFixed(6))))}
-                        style={{ width: 18, height: 18, borderRadius: 2, border: "1px solid #e0e0e0",
-                          background: "white", cursor: "pointer", fontSize: 11, color: "#555",
-                          padding: 0, fontFamily: "inherit" }}>−</button>
-                      <span style={{ fontSize: 11, fontWeight: 600, color: "#111", minWidth: 52,
-                        textAlign: "right", fontFamily: "'DM Mono',monospace" }}>
-                        {fmtVal(f, v)}
-                      </span>
-                      <button onClick={() => onChange(f.key, Math.min(f.max ?? Infinity, Number((Number(v) + f.step).toFixed(6))))}
-                        style={{ width: 18, height: 18, borderRadius: 2, border: "1px solid #e0e0e0",
-                          background: "white", cursor: "pointer", fontSize: 11, color: "#555",
-                          padding: 0, fontFamily: "inherit" }}>+</button>
-                    </>
-                  )}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      ))}
-    </div>
+  const TH = ({ children, align = "right" }) => (
+    <th style={{ padding:"5px 10px", textAlign:align, fontSize:8, color:"#888", textTransform:"uppercase", letterSpacing:"0.07em", fontWeight:700, whiteSpace:"nowrap", borderBottom:"1px solid #e0e0e0" }}>
+      {children}
+    </th>
   );
-}
-
-// ─── MAIN COMPONENT ───────────────────────────────────────────────────────────
-export default function DevBudgetPanel({ baseFA, onBudgetUpdate, scenarioId, dbBudgetItems, dbBudgetAssump, onBudgetItemsChange, onBudgetAssumpChange }) {
-  // Convert DB rows → grouped budget format, or fall back to DEFAULT_BUDGET
-  const initBudget = () => {
-    if (!dbBudgetItems || dbBudgetItems.length === 0) return DEFAULT_BUDGET;
-    // Group DB rows by category
-    const catOrder = ["acquisition","hard_costs","soft_costs","financing_legal","org_carrying","developer_fee"];
-    const catMeta  = {
-      acquisition:    { label: "Acquisition",                      color: "#5a3a00" },
-      hard_costs:     { label: "Hard Costs",                       color: "#1a3a6b" },
-      soft_costs:     { label: "Soft Costs",                       color: "#1a6b3c" },
-      financing_legal:{ label: "Financing & Legal",                color: "#8B2500" },
-      org_carrying:   { label: "Organizational & Carrying Costs",  color: "#555"    },
-      developer_fee:  { label: "Developer Fee",                    color: "#1a3a6b" },
-    };
-    const grouped = {};
-    for (const row of dbBudgetItems) {
-      if (!grouped[row.category]) grouped[row.category] = [];
-      grouped[row.category].push({
-        id:       row.id,         // use DB uuid as id
-        _dbId:    row.id,
-        label:    row.label,
-        amount:   Number(row.amount),
-        basis:    row.in_basis,
-        calcType: row.calc_type,  // 'input' | 'calc'
-        calcKey:  row.calc_key,
-        note:     row.notes || "",
-      });
-    }
-    return catOrder.map(catId => ({
-      id: catId,
-      label: catMeta[catId]?.label || catId,
-      color: catMeta[catId]?.color || "#666",
-      items: grouped[catId] || [],
-    }));
-  };
-
-  const [budget, setBudget] = useState(initBudget);
-  const [collapsed, setCollapsed] = useState({});
-  const [showNotes, setShowNotes] = useState(true);
-  const [showSummary, setShowSummary] = useState(true);
-  const [saving, setSaving] = useState(false);
-
-  // Assumptions state — seeded from DB, falls back to engine defaults
-  const initAssump = () => {
-    if (!dbBudgetAssump) return {};
-    return { ...dbBudgetAssump };
-  };
-  const [assumptions, setAssumptions] = useState(initAssump);
-
-  // Re-seed assumptions when DB data arrives
-  useEffect(() => {
-    if (dbBudgetAssump) setAssumptions({ ...dbBudgetAssump });
-  }, [dbBudgetAssump?.scenario_id]);
-
-  // Update a single assumption and persist to Supabase
-  const updateAssumption = useCallback(async (key, val) => {
-    setAssumptions(prev => ({ ...prev, [key]: val }));
-    if (scenarioId) {
-      try {
-        await upsertBudgetAssumptions(scenarioId, { [key]: val });
-      } catch (e) {
-        console.warn("Assumption save failed:", e.message);
-      }
-    }
-  }, [scenarioId]);
-
-  // ── RUN THE CALC ENGINE on every budget or assumption change ──────────────
-  const engineResult = useMemo(() => {
-    // Flatten budget items for the engine
-    const flatItems = budget.flatMap(cat =>
-      cat.items.map(i => ({
-        ...i,
-        in_basis: i.basis !== false && i.in_basis !== false,
-        calc_type: i.calcType || i.calc_type || "input",
-        calc_key:  i.calcKey  || i.calc_key  || null,
-        category: cat.id,
-      }))
-    );
-    return runCalcEngine(flatItems, assumptions, baseFA,
-      baseFA?.total_units || 175);
-  }, [budget, assumptions, baseFA?.loan_amount]);
-
-  // Apply engine results back to CALC items in budget display
-  const budgetWithCalc = useMemo(() => {
-    if (!engineResult) return budget;
-    return budget.map(cat => ({
-      ...cat,
-      items: cat.items.map(item => {
-        const key = item.calcKey || item.calc_key;
-        if ((item.calcType || item.calc_type) === "calc" && key && engineResult.calcValues[key] != null) {
-          return { ...item, amount: Math.round(engineResult.calcValues[key]) };
-        }
-        return item;
-      }),
-    }));
-  }, [budget, engineResult]);
-
-  // Persist CALC results back to Supabase (debounced — only when engine converges)
-  useEffect(() => {
-    if (!engineResult?.converged || !scenarioId) return;
-    const { calcValues } = engineResult;
-    // Fire-and-forget: update each CALC item in DB
-    budget.forEach(cat => cat.items.forEach(item => {
-      const key = item.calcKey || item.calc_key;
-      if ((item.calcType || item.calc_type) === "calc" && key && calcValues[key] != null && item._dbId) {
-        const newAmt = Math.round(calcValues[key]);
-        if (Math.abs(newAmt - (item.amount || 0)) > 0.5) {
-          updateBudgetItem(item._dbId, { amount: newAmt }).catch(() => {});
-        }
-      }
-    }));
-  }, [engineResult?.tdc]);  // only fire when TDC changes
-
-  // Re-init if DB data arrives after mount
-  const prevDbRef = useState(dbBudgetItems)[0];
-  useEffect(() => {
-    if (dbBudgetItems && dbBudgetItems.length > 0) {
-      setBudget(initBudget());
-    }
-  }, [dbBudgetItems?.length]);
-
-  // Persist item change to Supabase
-  const persistItem = async (item, field, val) => {
-    if (!scenarioId || !item._dbId) return;
-    const fieldMap = { label: "label", amount: "amount", basis: "in_basis", note: "notes" };
-    const dbField  = fieldMap[field];
-    if (!dbField) return;
-    try {
-      await updateBudgetItem(item._dbId, { [dbField]: val });
-    } catch (e) {
-      console.warn("Budget item save failed:", e.message);
-    }
-  };
-
-  const updateItem  = (catId, itemId, field, val) => {
-    setBudget(b => {
-      const next = b.map(c => c.id !== catId ? c : {
-        ...c, items: c.items.map(i => {
-          if (i.id !== itemId) return i;
-          const updated = { ...i, [field]: val };
-          persistItem(updated, field, val);
-          return updated;
-        })
-      });
-      return next;
-    });
-  };
-
-  const removeItem  = (catId, itemId) =>
-    setBudget(b => b.map(c => c.id !== catId ? c : { ...c, items: c.items.filter(i => i.id !== itemId) }));
-  const addItem     = (catId, item) =>
-    setBudget(b => b.map(c => c.id !== catId ? c : { ...c, items: [...c.items, item] }));
-  const toggleCat   = (catId) =>
-    setCollapsed(s => ({ ...s, [catId]: !s[catId] }));
-
-  // Totals — always computed from budgetWithCalc (includes engine CALC values)
-  const totals = useMemo(() => {
-    let basisTotal = 0, nonBasisTotal = 0;
-    const byCategory = budgetWithCalc.map(cat => {
-      const catBasis    = cat.items.filter(i => i.basis).reduce((s, i) => s + (i.amount || 0), 0);
-      const catNonBasis = cat.items.filter(i => !i.basis).reduce((s, i) => s + (i.amount || 0), 0);
-      basisTotal    += catBasis;
-      nonBasisTotal += catNonBasis;
-      return { id: cat.id, label: cat.label, color: cat.color, basis: catBasis, nonBasis: catNonBasis, total: catBasis + catNonBasis };
-    });
-    return { basisTotal, nonBasisTotal, tdc: basisTotal + nonBasisTotal, byCategory };
-  }, [budgetWithCalc]);
 
   return (
     <div>
       {/* Header */}
-      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 16 }}>
-        <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
-          <h2 style={{ fontFamily: "'Playfair Display',serif", fontSize: 20, fontWeight: 400, color: "#111" }}>
-            Development Budget
-          </h2>
-          <span style={{ fontSize: 9, color: "#aaa", letterSpacing: "0.08em", textTransform: "uppercase" }}>
-            LINE ITEMS · BASIS ELIGIBLE · TDC
-          </span>
+      <div style={{ display:"flex", alignItems:"baseline", justifyContent:"space-between", marginBottom:16 }}>
+        <div style={{ display:"flex", alignItems:"baseline", gap:10 }}>
+          <h2 style={{ fontFamily:"'Playfair Display', serif", fontSize:20, fontWeight:400, color:"#111" }}>Development Budget</h2>
+          <span style={{ fontSize:9, color:"#aaa", letterSpacing:"0.08em", textTransform:"uppercase" }}>MODULE 2A · STATIC BUDGET</span>
         </div>
-        <div style={{ display: "flex", gap: 6 }}>
-          <button
-            onClick={() => setShowNotes(v => !v)}
-            style={{ background: "white", border: "1px solid #e0e0e0", color: "#666", padding: "5px 11px",
-              borderRadius: 3, cursor: "pointer", fontSize: 9, letterSpacing: "0.08em",
-              textTransform: "uppercase", fontFamily: "'DM Mono',monospace" }}>
-            {showNotes ? "Hide Notes" : "Show Notes"}
-          </button>
-          <button
-            onClick={() => setCollapsed(c => {
-              const allCollapsed = budget.every(cat => c[cat.id]);
-              return allCollapsed ? {} : Object.fromEntries(budget.map(cat => [cat.id, true]));
-            })}
-            style={{ background: "white", border: "1px solid #e0e0e0", color: "#666", padding: "5px 11px",
-              borderRadius: 3, cursor: "pointer", fontSize: 9, letterSpacing: "0.08em",
-              textTransform: "uppercase", fontFamily: "'DM Mono',monospace" }}>
-            {budget.every(cat => collapsed[cat.id]) ? "Expand All" : "Collapse All"}
-          </button>
-          {onBudgetUpdate && (
-            <button
-              onClick={() => onBudgetUpdate(totals.basisTotal, totals.tdc, budgetWithCalc)}
-              style={{ background: "#1a3a6b", color: "white", border: "none", padding: "5px 14px",
-                borderRadius: 3, cursor: "pointer", fontSize: 9, letterSpacing: "0.08em",
-                textTransform: "uppercase", fontFamily: "'DM Mono',monospace", fontWeight: 700 }}>
-              Push to Tax Credit →
-            </button>
-          )}
+        <div style={{ fontSize:9, color:"#5a3a00", background:"#fdf8f0", border:"1px solid #e8d9b8", borderRadius:3, padding:"3px 8px" }}>
+          Construction interest = estimate · Module 2B calculates actuals
         </div>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: showSummary ? "1fr 260px" : "1fr", gap: 14, alignItems: "start" }}>
+      {/* Assumptions */}
+      <AssumptionsBar assumptions={assumptions} onUpdate={updateAssumptions} />
 
-        {/* LEFT — Detail budget */}
-        <div style={{ background: "white", border: "1px solid #e0e0e0", borderRadius: 6, overflow: "hidden" }}>
-          {/* Column headers */}
-          <div style={{
-            display: "grid",
-            gridTemplateColumns: showNotes ? "64px 1fr 130px 180px 24px" : "64px 1fr 130px 24px",
-            background: "#111", padding: "6px 8px",
-          }}>
-            {["Basis?", "Line Item", "Amount", showNotes && "Notes", ""].filter(Boolean).map(h => (
-              <div key={h} style={{ fontSize: 8, fontWeight: 700, color: "#888", textTransform: "uppercase",
-                letterSpacing: "0.07em", textAlign: h === "Amount" ? "right" : "left" }}>
-                {h}
-              </div>
-            ))}
-          </div>
+      {/* Column headers */}
+      <div style={{ background:"#fafafa", border:"1px solid #e0e0e0", borderRadius:"6px 6px 0 0", marginBottom:0 }}>
+        <table style={{ width:"100%", borderCollapse:"collapse", fontSize:11 }}>
+          <thead>
+            <tr>
+              <TH align="left">Line Item</TH>
+              <TH>Amount</TH>
+              <TH>$/Unit</TH>
+              <TH>In Basis</TH>
+              <TH align="left">Notes</TH>
+              <TH></TH>
+            </tr>
+          </thead>
+        </table>
+      </div>
 
-          {/* Engine status banner */}
-          {engineResult && (
-            <div style={{
-              padding: "6px 12px", background: engineResult.converged ? "#f0f7f4" : "#fff8f0",
-              borderBottom: "1px solid #e0e0e0", display: "flex", alignItems: "center",
-              gap: 8, flexWrap: "wrap",
-            }}>
-              <span style={{
-                fontSize: 8, fontWeight: 700, letterSpacing: "0.07em", textTransform: "uppercase",
-                color: engineResult.converged ? "#1a6b3c" : "#c47a3a",
-                padding: "1px 6px", border: `1px solid ${engineResult.converged ? "#b8dfc8" : "#e8c07a"}`,
-                borderRadius: 2, background: engineResult.converged ? "#e8f4ee" : "#fdf8f0",
-              }}>
-                {engineResult.converged ? `✓ CONVERGED (${engineResult.iterations} iters)` : "⚠ NOT CONVERGED"}
-              </span>
-              <span style={{ fontSize: 9, color: "#888" }}>
-                Const Loan: <strong style={{ color: "#111" }}>{fmtM(engineResult.constLoanAmount)}</strong>
-                {" · "}Total Dev Fee: <strong style={{ color: "#111" }}>{fmtM(engineResult.totalDevFee)}</strong>
-                {assumptions.escalation_enabled && ` · ${((assumptions.escalation_rate||0.02)*100).toFixed(1)}% escalation ×${((engineResult.calcValues?._escalMult||1)).toFixed(3)}`}
-              </span>
-            </div>
-          )}
-
-          {budgetWithCalc.map(cat => (
-            <CategorySection
-              key={cat.id}
-              cat={cat}
-              showNotes={showNotes}
-              collapsed={collapsed[cat.id]}
-              onToggle={() => toggleCat(cat.id)}
-              onUpdateItem={updateItem}
-              onRemoveItem={removeItem}
-              onAddItem={addItem}
+      {/* Budget sections */}
+      <div style={{ display:"flex", flexDirection:"column", gap:6, marginBottom:6 }}>
+        {Object.entries(SECTION_CONFIG).map(([key, cfg]) => {
+          const { total, basis } = getSectionTotals(key);
+          return (
+            <BudgetSection
+              key={key}
+              sectionKey={key}
+              lines={sections[key]}
+              sectionTotal={total}
+              basisTotal={basis}
+              totalUnits={totalUnits}
+              calcs={calcs}
+              color={cfg.color}
+              label={cfg.label}
+              onUpdateLine={updateLine}
+              onRemoveLine={removeLine}
+              onAddLine={addLine}
             />
-          ))}
+          );
+        })}
+      </div>
 
-          {/* Grand total row */}
-          <div style={{
-            display: "flex", justifyContent: "space-between", alignItems: "center",
-            padding: "10px 16px", background: "#111", marginTop: 2,
-          }}>
-            <span style={{ fontSize: 10, fontWeight: 700, color: "white", textTransform: "uppercase",
-              letterSpacing: "0.07em", fontFamily: "'DM Mono',monospace" }}>
-              TOTAL DEVELOPMENT COST
+      {/* Developer Fee section — calculated, not editable items */}
+      <div style={{ marginBottom:6 }}>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center",
+          padding:"8px 12px", background:"#2a2a2a", color:"white", borderRadius:6 }}>
+          <span style={{ fontSize:9, fontWeight:700, letterSpacing:"0.12em", textTransform:"uppercase" }}>
+            Developer Fee
+          </span>
+          <div style={{ display:"flex", gap:20, alignItems:"center" }}>
+            <span style={{ fontSize:10 }}>
+              <span style={{ opacity:0.5, fontSize:8, marginRight:4 }}>TOTAL</span>
+              {fmtM(calcs.devFeeTotal)}
             </span>
-            <div style={{ display: "flex", gap: 24 }}>
-              <div style={{ textAlign: "right" }}>
-                <div style={{ fontSize: 8, color: "#888", textTransform: "uppercase" }}>In Basis</div>
-                <div style={{ fontSize: 13, fontWeight: 700, color: "#6dba8a", fontFamily: "'DM Mono',monospace" }}>
-                  {fmtM(totals.basisTotal)}
-                </div>
-              </div>
-              <div style={{ textAlign: "right" }}>
-                <div style={{ fontSize: 8, color: "#888", textTransform: "uppercase" }}>Not Basis</div>
-                <div style={{ fontSize: 13, fontWeight: 700, color: "#aaa", fontFamily: "'DM Mono',monospace" }}>
-                  {fmtM(totals.nonBasisTotal)}
-                </div>
-              </div>
-              <div style={{ textAlign: "right" }}>
-                <div style={{ fontSize: 8, color: "#888", textTransform: "uppercase" }}>TDC</div>
-                <div style={{ fontSize: 15, fontWeight: 700, color: "white", fontFamily: "'DM Mono',monospace" }}>
-                  {fmtM(totals.tdc)}
-                </div>
-              </div>
-            </div>
+            <span style={{ fontSize:10 }}>
+              <span style={{ opacity:0.5, fontSize:8, marginRight:4 }}>{(assumptions.dev_fee_pct * 100).toFixed(1)}% OF COSTS</span>
+              {fmtM(calcs.devFeeTotal)}
+            </span>
           </div>
         </div>
-
-        {/* RIGHT — Basis Summary */}
-        {showSummary && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-
-            {/* TDC summary card */}
-            <div style={{ background: "white", border: "1px solid #e0e0e0", borderRadius: 6, padding: "14px 16px" }}>
-              <div style={{ fontSize: 8, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase",
-                color: "#888", marginBottom: 12 }}>TDC Summary</div>
-              <div style={{ fontFamily: "'Playfair Display',serif", fontSize: 28, fontWeight: 400, color: "#111",
-                marginBottom: 4 }}>{fmtM(totals.tdc)}</div>
-              <div style={{ fontSize: 10, color: "#aaa", marginBottom: 16 }}>Total Development Cost</div>
-
-              <div style={{ display: "flex", gap: 0, marginBottom: 12 }}>
-                <div style={{ flex: totals.basisTotal / totals.tdc, background: "#1a6b3c",
-                  height: 6, borderRadius: "3px 0 0 3px" }} />
-                <div style={{ flex: totals.nonBasisTotal / totals.tdc, background: "#e8e8e8",
-                  height: 6, borderRadius: "0 3px 3px 0" }} />
-              </div>
-
-              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
-                <div>
-                  <div style={{ fontSize: 9, color: "#1a6b3c", fontWeight: 700, textTransform: "uppercase",
-                    letterSpacing: "0.05em" }}>Eligible Basis</div>
-                  <div style={{ fontSize: 14, fontWeight: 700, color: "#1a6b3c",
-                    fontFamily: "'DM Mono',monospace" }}>{fmtM(totals.basisTotal)}</div>
-                  <div style={{ fontSize: 9, color: "#aaa" }}>{fmtPct(totals.basisTotal / totals.tdc)} of TDC</div>
-                </div>
-                <div style={{ textAlign: "right" }}>
-                  <div style={{ fontSize: 9, color: "#888", fontWeight: 700, textTransform: "uppercase",
-                    letterSpacing: "0.05em" }}>Not in Basis</div>
-                  <div style={{ fontSize: 14, fontWeight: 500, color: "#888",
-                    fontFamily: "'DM Mono',monospace" }}>{fmtM(totals.nonBasisTotal)}</div>
-                  <div style={{ fontSize: 9, color: "#aaa" }}>{fmtPct(totals.nonBasisTotal / totals.tdc)} of TDC</div>
-                </div>
-              </div>
-            </div>
-
-            {/* By category */}
-            <div style={{ background: "white", border: "1px solid #e0e0e0", borderRadius: 6, padding: "14px 16px" }}>
-              <div style={{ fontSize: 8, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase",
-                color: "#888", marginBottom: 12 }}>Basis by Category</div>
-              {totals.byCategory.map(cat => (
-                <div key={cat.id} style={{ marginBottom: 10 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 3 }}>
-                    <span style={{ fontSize: 9, fontWeight: 700, color: cat.color, textTransform: "uppercase",
-                      letterSpacing: "0.04em" }}>{cat.label}</span>
-                    <span style={{ fontSize: 10, fontWeight: 700, fontFamily: "'DM Mono',monospace",
-                      color: "#111" }}>{fmtM(cat.total)}</span>
-                  </div>
-                  {/* Mini bar: basis / non-basis */}
-                  <div style={{ display: "flex", gap: 0, marginBottom: 3, height: 4 }}>
-                    {cat.basis > 0 && <div style={{
-                      flex: cat.basis / cat.total, background: cat.color, opacity: 0.8,
-                      borderRadius: cat.nonBasis > 0 ? "2px 0 0 2px" : "2px",
-                    }} />}
-                    {cat.nonBasis > 0 && <div style={{
-                      flex: cat.nonBasis / cat.total, background: "#e8e8e8",
-                      borderRadius: cat.basis > 0 ? "0 2px 2px 0" : "2px",
-                    }} />}
-                  </div>
-                  <div style={{ display: "flex", justifyContent: "space-between" }}>
-                    <span style={{ fontSize: 9, color: "#1a6b3c" }}>
-                      {cat.basis > 0 ? fmt$(cat.basis) + " basis" : ""}
-                    </span>
-                    <span style={{ fontSize: 9, color: "#bbb" }}>
-                      {cat.nonBasis > 0 ? fmt$(cat.nonBasis) + " not" : ""}
-                    </span>
-                  </div>
-                </div>
+        <div style={{ background:"white", border:"1px solid #e0e0e0", borderTop:"none", borderRadius:"0 0 6px 6px" }}>
+          <table style={{ width:"100%", borderCollapse:"collapse", fontSize:11, fontFamily:"Inter, sans-serif" }}>
+            <tbody>
+              {[
+                { label: `Cash Portion (${(assumptions.cash_fee_pct * 100).toFixed(0)}%)`,     amount: calcs.devFeeCash,     basis: true  },
+                { label: `Deferred Portion (${((1 - assumptions.cash_fee_pct) * 100).toFixed(0)}%)`, amount: calcs.devFeeDeferred, basis: true  },
+              ].map(row => (
+                <tr key={row.label} style={{ borderBottom:"1px solid #f5f5f5" }}>
+                  <td style={{ padding:"5px 10px", paddingLeft:24, fontSize:11, color:"#666" }}>{row.label}</td>
+                  <td style={{ padding:"5px 10px", textAlign:"right", fontSize:11, fontWeight:500 }}>{fmt$(row.amount)}</td>
+                  <td style={{ padding:"5px 8px", textAlign:"right", fontSize:9, color:"#bbb" }}>
+                    {totalUnits > 0 ? fmt$(Math.round(row.amount / totalUnits)) : ""}
+                  </td>
+                  <td style={{ padding:"5px 10px", textAlign:"center", fontSize:9, color:"#1a6b3c" }}>
+                    {row.basis ? "✓" : ""}
+                  </td>
+                  <td colSpan={2} />
+                </tr>
               ))}
-            </div>
+            </tbody>
+          </table>
+        </div>
+      </div>
 
-            {/* Push callout */}
-            {onBudgetUpdate && (
-              <div style={{ background: "#f0f3f9", border: "1px solid #b8c8e0", borderRadius: 5,
-                padding: "10px 14px" }}>
-                <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.08em",
-                  textTransform: "uppercase", color: "#1a3a6b", marginBottom: 4 }}>
-                  Push to Tax Credit Basis
-                </div>
-                <div style={{ fontSize: 10, color: "#888", marginBottom: 8 }}>
-                  Eligible basis {fmtM(totals.basisTotal)} will populate the Tax Credit tab.
-                </div>
-                <button
-                  onClick={() => onBudgetUpdate(totals.basisTotal, totals.tdc, budgetWithCalc)}
-                  style={{ background: "#1a3a6b", color: "white", border: "none",
-                    padding: "7px 14px", borderRadius: 3, cursor: "pointer",
-                    fontSize: 9, letterSpacing: "0.08em", textTransform: "uppercase",
-                    fontFamily: "'DM Mono',monospace", fontWeight: 700, width: "100%" }}>
-                  Push to Tax Credit →
-                </button>
+      {/* TDC Summary Footer */}
+      <div style={{ background:"#111", color:"white", borderRadius:6, padding:"16px 20px", marginTop:8 }}>
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(5, 1fr)", gap:16 }}>
+          {[
+            { label:"Total Dev Cost",    value: fmtM(calcs.tdc),           sub: fmt$(Math.round(calcs.tdc / totalUnits)) + "/unit", highlight: true },
+            { label:"Eligible Basis",    value: fmtM(calcs.eligibleBasis), sub: fmtPct(calcs.eligibleBasis / calcs.tdc) + " of TDC" },
+            { label:"Dev Fee",           value: fmtM(calcs.devFeeTotal),   sub: fmtPct(assumptions.dev_fee_pct) + " of costs" },
+            { label:"Hard Costs",        value: fmtM(calcs.hcTotal),       sub: fmt$(Math.round(calcs.hcTotal / totalUnits)) + "/unit" },
+            { label:"TDC ex Dev Fee",    value: fmtM(calcs.subtotal),      sub: fmt$(Math.round(calcs.subtotal / totalUnits)) + "/unit" },
+          ].map(m => (
+            <div key={m.label}>
+              <div style={{ fontSize:8, color:"#888", textTransform:"uppercase", letterSpacing:"0.08em", marginBottom:4 }}>{m.label}</div>
+              <div style={{ fontSize: m.highlight ? 20 : 16, fontWeight:700, fontFamily:"'Playfair Display', serif", color: m.highlight ? "white" : "#ccc" }}>
+                {m.value}
               </div>
-            )}
-
-            {/* Assumptions Panel */}
-            <AssumptionsPanel assumptions={assumptions} onChange={updateAssumption} />
-          </div>
-        )}
+              <div style={{ fontSize:9, color:"#555", marginTop:2 }}>{m.sub}</div>
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   );
