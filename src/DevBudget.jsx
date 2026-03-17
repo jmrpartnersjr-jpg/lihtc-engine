@@ -237,8 +237,8 @@ function AssumptionsBar({ assumptions, onUpdate }) {
     { key:"cash_fee_pct",         label:"Cash Fee %",    pct:true  },
     { key:"const_origination_pct",label:"CL Orig. %",    pct:true  },
     { key:"perm_origination_pct", label:"Perm Orig. %",  pct:true  },
-    { key:"const_loan_amount",    label:"Const. Loan $", pct:false },
-    { key:"perm_loan_amount",     label:"Perm Loan $",   pct:false },
+    { key:"const_loan_amount",    label:"Const. Loan $ (temp)", pct:false },
+    { key:"perm_loan_amount",     label:"Perm Loan $ (temp)", pct:false },
   ];
 
   return (
@@ -273,7 +273,7 @@ function AssumptionsBar({ assumptions, onUpdate }) {
         </div>
       </div>
       <div style={{ fontSize:8, color:"#aaa", marginTop:6 }}>
-        Construction and lease-up interest are estimates — Module 2B (Construction Cash Flow) will calculate actuals.
+        Construction and lease-up interest are estimates — Module 2B (Construction Cash Flow) will calculate actuals. Loan amounts marked "(temp)" will be replaced by live values once Module 4 (Debt) is wired.
       </div>
     </div>
   );
@@ -318,7 +318,7 @@ function LineRow({ line, resolvedAmount, totalUnits, onUpdate, onRemove, color }
   return (
     <tr style={{ borderBottom:"1px solid #f5f5f5" }}>
       {/* Label */}
-      <td style={{ padding:"5px 10px", paddingLeft:24 }}>
+      <td style={{ padding:"5px 10px", paddingLeft:12 }}>
         <input
           value={line.label}
           onChange={e => onUpdate({ label: e.target.value })}
@@ -326,7 +326,7 @@ function LineRow({ line, resolvedAmount, totalUnits, onUpdate, onRemove, color }
         />
       </td>
       {/* Amount */}
-      <td style={{ padding:"5px 10px", textAlign:"right", minWidth:110 }}>
+      <td style={{ padding:"5px 10px", textAlign:"right" }}>
         {isCalc ? (
           <span style={{ fontSize:11, color: is2B ? "#5a3a00" : "#666" }}>
             {fmt$(resolvedAmount)}
@@ -343,13 +343,13 @@ function LineRow({ line, resolvedAmount, totalUnits, onUpdate, onRemove, color }
         )}
       </td>
       {/* $/unit */}
-      <td style={{ padding:"5px 8px", textAlign:"right", minWidth:70 }}>
+      <td style={{ padding:"5px 8px", textAlign:"right" }}>
         <span style={{ fontSize:9, color:"#bbb" }}>
           {perUnit != null && perUnit > 0 ? fmt$(Math.round(perUnit)) : ""}
         </span>
       </td>
       {/* In Basis */}
-      <td style={{ padding:"5px 10px", textAlign:"center", minWidth:60 }}>
+      <td style={{ padding:"5px 10px", textAlign:"center" }}>
         <input
           type="checkbox"
           checked={line.in_basis}
@@ -380,7 +380,7 @@ function LineRow({ line, resolvedAmount, totalUnits, onUpdate, onRemove, color }
   );
 }
 
-function BudgetSection({ sectionKey, lines, sectionTotal, basisTotal, totalUnits, calcs, onUpdateLine, onRemoveLine, onAddLine, color, label }) {
+function BudgetSection({ sectionKey, lines, sectionTotal, basisTotal, totalUnits, calcs, onUpdateLine, onRemoveLine, onAddLine, color, label, showHeader }) {
   const [collapsed, setCollapsed] = useState(false);
 
   return (
@@ -410,15 +410,27 @@ function BudgetSection({ sectionKey, lines, sectionTotal, basisTotal, totalUnits
 
       {!collapsed && (
         <div style={{ background:"white", border:"1px solid #e0e0e0", borderTop:"none", borderRadius:"0 0 6px 6px", overflowX:"auto" }}>
-          <table style={{ width:"100%", borderCollapse:"collapse", fontSize:11, fontFamily:"Inter, sans-serif" }}>
+          <table style={{ width:"100%", borderCollapse:"collapse", fontSize:11, fontFamily:"Inter, sans-serif", tableLayout:"fixed" }}>
             <colgroup>
-              <col style={{ minWidth:200 }} />
-              <col style={{ width:130 }} />
-              <col style={{ width:80 }} />
-              <col style={{ width:70 }} />
               <col />
-              <col style={{ width:40 }} />
+              <col style={{ width:140 }} />
+              <col style={{ width:76 }} />
+              <col style={{ width:60 }} />
+              <col style={{ width:200 }} />
+              <col style={{ width:32 }} />
             </colgroup>
+            {showHeader && (
+              <thead>
+                <tr style={{ borderBottom:"1px solid #e8e8e8", background:"#f8f8f8" }}>
+                  <th style={{ padding:"4px 10px", paddingLeft:12, textAlign:"left",   fontSize:8, color:"#888", fontWeight:700, textTransform:"uppercase", letterSpacing:"0.07em" }}>Line Item</th>
+                  <th style={{ padding:"4px 10px", textAlign:"right",  fontSize:8, color:"#888", fontWeight:700, textTransform:"uppercase", letterSpacing:"0.07em" }}>Amount</th>
+                  <th style={{ padding:"4px 8px",  textAlign:"right",  fontSize:8, color:"#888", fontWeight:700, textTransform:"uppercase", letterSpacing:"0.07em" }}>$/Unit</th>
+                  <th style={{ padding:"4px 10px", textAlign:"center", fontSize:8, color:"#888", fontWeight:700, textTransform:"uppercase", letterSpacing:"0.07em" }}>Basis</th>
+                  <th style={{ padding:"4px 8px",  textAlign:"left",   fontSize:8, color:"#888", fontWeight:700, textTransform:"uppercase", letterSpacing:"0.07em" }}>Notes</th>
+                  <th />
+                </tr>
+              </thead>
+            )}
             <tbody>
               {lines.map(line => {
                 const resolvedAmount = resolveAmount(line, calcs);
@@ -528,25 +540,9 @@ export default function DevBudgetPanel({ onBudgetUpdate }) {
       {/* Assumptions */}
       <AssumptionsBar assumptions={assumptions} onUpdate={updateAssumptions} />
 
-      {/* Column headers */}
-      <div style={{ background:"#fafafa", border:"1px solid #e0e0e0", borderRadius:"6px 6px 0 0", marginBottom:0 }}>
-        <table style={{ width:"100%", borderCollapse:"collapse", fontSize:11 }}>
-          <thead>
-            <tr>
-              <TH align="left">Line Item</TH>
-              <TH align="right">Amount</TH>
-              <TH align="right">$/Unit</TH>
-              <TH align="center">Basis</TH>
-              <TH align="left">Notes</TH>
-              <TH></TH>
-            </tr>
-          </thead>
-        </table>
-      </div>
-
       {/* Budget sections */}
       <div style={{ display:"flex", flexDirection:"column", gap:6, marginBottom:6 }}>
-        {Object.entries(SECTION_CONFIG).map(([key, cfg]) => {
+        {Object.entries(SECTION_CONFIG).map(([key, cfg], idx) => {
           const { total, basis } = getSectionTotals(key);
           return (
             <BudgetSection
@@ -559,6 +555,7 @@ export default function DevBudgetPanel({ onBudgetUpdate }) {
               calcs={calcs}
               color={cfg.color}
               label={cfg.label}
+              showHeader={idx === 0}
               onUpdateLine={updateLine}
               onRemoveLine={removeLine}
               onAddLine={addLine}
