@@ -13,7 +13,7 @@ const fmtPct = v => v == null ? "—" : (v * 100).toFixed(3) + "%";
 const fmtPct2 = v => v == null ? "—" : (v * 100).toFixed(2) + "%";
 const fmtX   = v => v == null ? "—" : v.toFixed(2) + "x";
 
-let _id = 400;
+let _id = 600; // start above all default IDs (400-403 used in DEFAULT_SUBDEBT)
 const mkId = () => ++_id;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -898,6 +898,43 @@ export default function DebtPanel() {
             <SectionHeader title="Construction Financing" color="#8B2500"
               subtitle="Tax-exempt + taxable companion loan · Module 2B will calculate exact interest" />
 
+            {/* Budget drift warning */}
+            {(() => {
+              const currentLTC = tdc > 0 ? calcs.combinedConstLoan / tdc : 0;
+              const storedLTC  = construction.ltc_pct || 0.82;
+              const drift      = Math.abs(currentLTC - storedLTC);
+              return drift > 0.02 ? (
+                <div style={{ background:"#fdf8f0", border:"1px solid #e8c84a", borderRadius:5,
+                  padding:"8px 12px", marginBottom:10, display:"flex", justifyContent:"space-between",
+                  alignItems:"center", gap:10 }}>
+                  <div>
+                    <div style={{ fontSize:9, fontWeight:700, color:"#5a3a00" }}>
+                      ⚠ Loan amounts may be stale — TDC has changed
+                    </div>
+                    <div style={{ fontSize:8, color:"#7a5a00", marginTop:2 }}>
+                      Current LTC: {(currentLTC*100).toFixed(1)}% · Target: {(storedLTC*100).toFixed(1)}% · Drift: {(drift*100).toFixed(1)}%
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => {
+                      const newCombined = tdc * storedLTC;
+                      const tePct = calcs.combinedConstLoan > 0
+                        ? construction.te_loan_amount / calcs.combinedConstLoan
+                        : 0.647;
+                      updateConstruction({
+                        te_loan_amount:      Math.round(newCombined * tePct),
+                        taxable_loan_amount: Math.round(newCombined * (1 - tePct)),
+                      });
+                    }}
+                    style={{ background:"#5a3a00", color:"white", border:"none", borderRadius:3,
+                      padding:"5px 10px", fontSize:8, fontWeight:700, cursor:"pointer",
+                      fontFamily:"Inter, sans-serif", whiteSpace:"nowrap" }}>
+                    SYNC FROM BUDGET
+                  </button>
+                </div>
+              ) : null;
+            })()}
+
             <FieldRow label="Lender">
               <TextInput value={construction.lender} onChange={v => updateConstruction({ lender: v })} width={180} />
             </FieldRow>
@@ -967,18 +1004,40 @@ export default function DebtPanel() {
           {/* ── OTHER SOURCES ── */}
           <div style={{ background:"white", border:"1px solid #e0e0e0", borderRadius:6,
             padding:"16px 18px" }}>
-            <SectionHeader title="Other Sources / Grants" color="#4a1a6b" />
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center",
+              marginBottom:14, paddingBottom:8, borderBottom:"2px solid #4a1a6b" }}>
+              <div style={{ fontSize:13, fontWeight:700, color:"#4a1a6b",
+                fontFamily:"Inter, sans-serif", textTransform:"uppercase", letterSpacing:"0.08em" }}>
+                Other Sources / Grants
+              </div>
+              <button
+                onClick={() => updateModule("debt", { other_sources: [...otherSources,
+                  { id: mkId(), label: "New Source", amount: 0, notes: "" }] })}
+                style={{ background:"#4a1a6b", color:"white", border:"none", borderRadius:3,
+                  padding:"3px 8px", fontSize:8, fontWeight:700, cursor:"pointer",
+                  fontFamily:"Inter, sans-serif", letterSpacing:"0.05em" }}>
+                + ADD
+              </button>
+            </div>
             {otherSources.map(src => (
-              <FieldRow key={src.id} label={
-                <input value={src.label} onChange={e => updateOtherSource(src.id, { label: e.target.value })}
-                  style={{ background:"transparent", border:"none", outline:"none", fontSize:10,
-                    color:"#444", fontFamily:"Inter, sans-serif", width:160 }} />
-              }>
+              <div key={src.id} style={{ display:"flex", alignItems:"center",
+                gap:6, marginBottom:6 }}>
+                <input value={src.label}
+                  onChange={e => updateOtherSource(src.id, { label: e.target.value })}
+                  style={{ flex:1, background:"#f8f8f8", border:"1px solid #e0e0e0",
+                    borderRadius:3, padding:"4px 8px", fontSize:10,
+                    fontFamily:"Inter, sans-serif", color:"#444", outline:"none" }} />
                 <NumInput value={src.amount} step={10000}
                   onChange={v => updateOtherSource(src.id, { amount: v })} prefix="$" />
-              </FieldRow>
+                <button
+                  onClick={() => updateModule("debt", {
+                    other_sources: otherSources.filter(s => s.id !== src.id) })}
+                  style={{ background:"none", border:"none", cursor:"pointer",
+                    color:"#ddd", fontSize:12, padding:"2px 4px", flexShrink:0 }}
+                  onMouseEnter={e => e.target.style.color="#8B2500"}
+                  onMouseLeave={e => e.target.style.color="#ddd"}>✕</button>
+              </div>
             ))}
-
           </div>
         </div>
 
@@ -1064,8 +1123,18 @@ export default function DebtPanel() {
             {/* Actual loan amount */}
             <div style={{ marginTop:10 }}>
               <FieldRow label="Loan Amount" note="Override DSCR max if lender comes in different">
-                <NumInput value={permanent.loan_amount} step={100000}
-                  onChange={v => updatePermanent({ loan_amount: v })} prefix="$" />
+                <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+                  <NumInput value={permanent.loan_amount} step={100000}
+                    onChange={v => updatePermanent({ loan_amount: v })} prefix="$" />
+                  <button
+                    onClick={() => updatePermanent({ loan_amount: Math.floor(calcs.maxLoanDSCR) })}
+                    title={`Set to DSCR-max: ${fmt$(Math.floor(calcs.maxLoanDSCR))}`}
+                    style={{ background:"#1a3a6b", color:"white", border:"none", borderRadius:3,
+                      padding:"4px 8px", fontSize:8, fontFamily:"Inter, sans-serif", cursor:"pointer",
+                      fontWeight:700, letterSpacing:"0.05em", whiteSpace:"nowrap" }}>
+                    USE MAX
+                  </button>
+                </div>
               </FieldRow>
               <FieldRow label="Origination Fee %">
                 <NumInput value={permanent.origination_pct} pct step={0.1}
