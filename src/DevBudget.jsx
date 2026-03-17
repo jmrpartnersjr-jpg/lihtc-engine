@@ -25,6 +25,13 @@ const DEFAULT_ASSUMPTIONS = {
   cash_fee_pct:         0.33,
   const_origination_pct: 0.01,
   perm_origination_pct:  0.01,
+  // Reserves — user configurable
+  rep_reserve_per_unit: 350,    // replacement reserve $/unit/year
+  op_reserve_months:    6,      // operating reserve months of NOI
+  ads_reserve_months:   6,      // ADS reserve months of debt service
+  // Fallback values used until NOI/ADS are wired from other modules
+  op_reserve_fallback:  637500,
+  ads_reserve_fallback: 1110159,
   // These will come from Debt module eventually
   const_loan_amount:    32941402,
   perm_loan_amount:     34049115,
@@ -153,10 +160,10 @@ function computeBudget(sections, assumptions, totalUnits, noi, ads) {
     .reduce((s, l) => s + (l.amount || 0), 0);
   const finTotal  = finInputs + constOrigination + permOrigination + constInterest + leaseupInterest;
 
-  // Org / reserves calculated lines
-  const opRes  = noi   ? noi / 2   : 637500;   // 6 months NOI
-  const repRes = totalUnits ? totalUnits * 350  : 61250;    // $350/unit
-  const adsRes = ads   ? ads / 2   : 1110159;  // 6 months ADS
+  // Org / reserves — driven by assumption inputs
+  const repRes = totalUnits * (a.rep_reserve_per_unit ?? 350);
+  const opRes  = noi ? noi * (a.op_reserve_months ?? 6) / 12 : (a.op_reserve_fallback ?? 637500);
+  const adsRes = ads ? ads * (a.ads_reserve_months ?? 6) / 12 : (a.ads_reserve_fallback ?? 1110159);
 
   const orgInputs = sections.org_reserves
     .filter(l => l.type === "input")
@@ -171,7 +178,7 @@ function computeBudget(sections, assumptions, totalUnits, noi, ads) {
   const subtotal = acqTotal + hcTotal + scTotal + finTotal + orgTotal;
 
   // Developer fee
-  const devFeeTotal    = subtotal * a.dev_fee_pct / (1 - a.dev_fee_pct); // fee on top of costs
+  const devFeeTotal    = subtotal * a.dev_fee_pct; // % of costs (not TDC)
   const devFeeCash     = devFeeTotal * a.cash_fee_pct;
   const devFeeDeferred = devFeeTotal * (1 - a.cash_fee_pct);
   const tdc            = subtotal + devFeeTotal;
@@ -230,16 +237,19 @@ function AssumptionsBar({ assumptions, onUpdate }) {
   };
 
   const fields = [
-    { key:"hc_contingency_pct",   label:"HC Cont. %",    pct:true  },
-    { key:"sales_tax_pct",        label:"Sales Tax %",   pct:true  },
-    { key:"sc_contingency_pct",   label:"SC Cont. %",    pct:true  },
-    { key:"dev_fee_pct",          label:"Dev Fee %",     pct:true  },
-    { key:"cash_fee_pct",         label:"Cash Fee %",    pct:true  },
-    { key:"const_origination_pct",label:"CL Orig. %",    pct:true  },
-    { key:"perm_origination_pct", label:"Perm Orig. %",  pct:true  },
-    { key:"const_loan_amount",    label:"Const. Loan $ (temp)", pct:false },
-    { key:"perm_loan_amount",     label:"Perm Loan $ (temp)", pct:false },
-  ];
+    { key:"hc_contingency_pct",   label:"HC Cont. %",        pct:true  },
+    { key:"sales_tax_pct",        label:"Sales Tax %",        pct:true  },
+    { key:"sc_contingency_pct",   label:"SC Cont. %",         pct:true  },
+    { key:"dev_fee_pct",          label:"Dev Fee % of Cost",  pct:true  },
+    { key:"cash_fee_pct",         label:"Cash Fee %",         pct:true  },
+    { key:"const_origination_pct",label:"CL Orig. %",         pct:true  },
+    { key:"perm_origination_pct", label:"Perm Orig. %",       pct:true  },
+    { key:"rep_reserve_per_unit", label:"Rep. Res. $/Unit",   pct:false },
+    { key:"op_reserve_months",    label:"Op. Res. Months",    pct:false },
+    { key:"ads_reserve_months",   label:"ADS Res. Months",    pct:false },
+    { key:"const_loan_amount",    label:"Const. Loan (temp)", pct:false },
+    { key:"perm_loan_amount",     label:"Perm Loan (temp)",   pct:false },
+  ]
 
   return (
     <div style={{ background:"#f8f9fc", border:"1px solid #e0e8f4", borderRadius:6, padding:"10px 16px", marginBottom:16 }}>
