@@ -410,13 +410,13 @@ function BudgetSection({ sectionKey, lines, sectionTotal, basisTotal, totalUnits
 
       {!collapsed && (
         <div style={{ background:"white", border:"1px solid #e0e0e0", borderTop:"none", borderRadius:"0 0 6px 6px", overflowX:"auto" }}>
-          <table style={{ width:"100%", borderCollapse:"collapse", fontSize:11, fontFamily:"Inter, sans-serif", tableLayout:"fixed" }}>
+          <table style={{ width:"100%", borderCollapse:"collapse", fontSize:11, fontFamily:"Inter, sans-serif", tableLayout:"fixed", minWidth:808 }}>
             <colgroup>
-              <col />
+              <col style={{ width:320 }} />
               <col style={{ width:140 }} />
               <col style={{ width:76 }} />
               <col style={{ width:60 }} />
-              <col style={{ width:200 }} />
+              <col style={{ width:180 }} />
               <col style={{ width:32 }} />
             </colgroup>
             {showHeader && (
