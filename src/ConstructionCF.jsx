@@ -15,22 +15,50 @@ const fmtPct = v => v == null ? "—" : (v * 100).toFixed(2) + "%";
 const fmtPct1 = v => v == null ? "—" : (v * 100).toFixed(1) + "%";
 
 // ─── S-CURVE GENERATOR ───────────────────────────────────────────────────────
-// Generates a smooth S-curve spend distribution over N months.
-// Peak spend is around month N*0.6.
-// Returns array of fractions summing to 1.0.
-function generateSCurve(months, peakMonth = null) {
+// shape: "flat" | "medium" | "steep"
+// flat   = uniform spend across all months
+// medium = bell curve peaking at ~55% through construction
+// steep  = S-curve with slow start, fast middle, slow end (most realistic)
+const SCURVE_SHAPES = {
+  flat:   { label: "Flat",   peak: 0.50, sharpness: 0.5  },
+  medium: { label: "Medium", peak: 0.55, sharpness: 1.5  },
+  steep:  { label: "Steep",  peak: 0.60, sharpness: 3.0  },
+};
+
+function generateSCurve(months, shape = "medium") {
   if (months <= 0) return [];
-  const peak = peakMonth ?? Math.round(months * 0.55);
+  const cfg = SCURVE_SHAPES[shape] || SCURVE_SHAPES.medium;
+  const peak = Math.round(months * cfg.peak);
+
+  if (shape === "flat") {
+    // Uniform — equal weight every month
+    return Array(months).fill(1 / months);
+  }
+
   const raw = [];
   for (let i = 0; i < months; i++) {
-    // Beta-like distribution: rises to peak, then falls
-    const x = i / (months - 1);
-    const alpha = peak / (months - 1);
-    // Triangle approximation — smooth enough for construction draws
-    const v = i <= peak
-      ? (i + 1) / (peak + 1)
-      : (months - i) / (months - peak);
+    let v;
+    if (shape === "steep") {
+      // True S-curve: slow-fast-slow using sine interpolation
+      const t = i / (months - 1);
+      v = 0.5 - 0.5 * Math.cos(Math.PI * t);
+      // Amplify the curve by applying a power
+      v = Math.pow(v, 0.5);
+    } else {
+      // Medium: triangle with slight rounding
+      v = i <= peak
+        ? Math.pow((i + 1) / (peak + 1), cfg.sharpness)
+        : Math.pow((months - i) / (months - peak), cfg.sharpness);
+    }
     raw.push(Math.max(0.001, v));
+  }
+  // Normalize so S-curve derivative = spend per month (not cumulative)
+  if (shape === "steep") {
+    // For steep, convert cumulative to incremental
+    const diffs = raw.map((v, i) => i === 0 ? v : v - raw[i - 1]);
+    const positiveDiffs = diffs.map(v => Math.max(0.001, v));
+    const sum = positiveDiffs.reduce((s, v) => s + v, 0);
+    return positiveDiffs.map(v => v / sum);
   }
   const sum = raw.reduce((s, v) => s + v, 0);
   return raw.map(v => v / sum);
@@ -51,15 +79,14 @@ function buildSchedule(params, interestEst) {
     teRate, taxableRate,
     teLoanMax, taxableLoanMax,
     // S-curve shape
-    hardCostPeak,
-    softCostFront, // soft costs are more front-loaded
+    drawCurve,
   } = params;
 
   const totalMonths = 1 + constructionMonths + leaseupMonths + stabilizedMonths;
 
   // Build spend-down schedule for each use category
-  const hcCurve = generateSCurve(constructionMonths, hardCostPeak);
-  const scCurve = generateSCurve(constructionMonths, Math.round(constructionMonths * 0.3));
+  const hcCurve = generateSCurve(constructionMonths, drawCurve);
+  const scCurve = generateSCurve(constructionMonths, "flat"); // soft costs more uniform
 
   // Monthly use amounts
   const monthlyUses = [];
@@ -276,12 +303,13 @@ function converge(params, startingEst, maxIter = 15) {
 
 // ─── DEFAULT STATE ────────────────────────────────────────────────────────────
 const DEFAULT_CF = {
-  // Field names match LihtcContext schema
+  // Field names match LihtcContext schema exactly
   construction_period_months: 24,
   leaseup_period_months:      7,
   stabilized_months:          4,
-  construction_start_date:    "2026-11-01",
-  hard_cost_peak_month:       14,
+  construction_start_date:    "2026-11-21",
+  draw_curve_hard_costs:      "medium",   // "flat" | "medium" | "steep" — matches context
+  draw_curve_soft_costs:      "flat",
   te_rate:                    0.0585,
   taxable_rate:               0.0585,
   te_loan_override:           null,
@@ -331,36 +359,53 @@ function NumInput({ value, onChange, step, min, max, pct, width = 90 }) {
   );
 }
 
-// Monthly table — shows key rows, collapsible
-function MonthlyTable({ rows, sources }) {
+// Horizontal monthly table — rows are categories, columns are months (Excel-style)
+const PERIOD_COLORS = {
+  'Closing':      "#1a3a6b",
+  'Construction': "#8B2500",
+  'Lease-Up':     "#5a3a00",
+  'Stabilized':   "#1a6b3c",
+};
+
+function MonthlyTable({ rows }) {
   const [collapsed, setCollapsed] = useState(true);
-  const [showAll, setShowAll] = useState(false);
 
-  const displayRows = showAll ? rows : rows.slice(0, collapsed ? 5 : rows.length);
-  const periods = ['Closing', 'Construction', 'Lease-Up', 'Stabilized'];
-  const periodColors = {
-    'Closing':      "#1a3a6b",
-    'Construction': "#8B2500",
-    'Lease-Up':     "#5a3a00",
-    'Stabilized':   "#1a6b3c",
-  };
+  const colW = 90; // column width per month
+  const labelW = 140; // row label column width
 
-  const th = (label, align = "right") => (
-    <th style={{ padding:"4px 8px", textAlign:align, fontSize:8, color:"#888",
-      fontWeight:700, textTransform:"uppercase", letterSpacing:"0.06em",
-      borderBottom:"1px solid #e0e0e0", whiteSpace:"nowrap" }}>{label}</th>
-  );
-  const td = (v, opts = {}) => (
-    <td style={{ padding:"4px 8px", textAlign: opts.align || "right", fontSize:10,
-      fontFamily:"Inter, sans-serif", color: opts.color || "#111",
-      fontWeight: opts.bold ? 700 : 400, whiteSpace:"nowrap",
-      borderBottom:"1px solid #f5f5f5" }}>{v}</td>
-  );
+  // Row definitions — what we show
+  const rowDefs = [
+    { key: "period",   label: "Period",         fn: r => r.period,
+      style: m => ({ fontWeight:700, color: PERIOD_COLORS[m.period] || "#888" }) },
+    { key: "hardCosts",label: "Hard Costs",       fn: r => r.uses.hardCosts > 0 ? fmt$(r.uses.hardCosts) : "—",
+      style: () => ({ color:"#444" }) },
+    { key: "other",    label: "Other Uses",       fn: r => {
+        const v = r.uses.softCosts + r.uses.acquisition + r.uses.orgCosts +
+                  r.uses.devFeeCash + r.uses.financingPerm + r.uses.financingConst;
+        return v > 0 ? fmt$(v) : "—";
+      }, style: () => ({ color:"#444" }) },
+    { key: "interest", label: "Interest",          fn: r => r.uses.interest > 0.5 ? fmt$(r.uses.interest) : "—",
+      style: () => ({ color:"#5a3a00", fontStyle:"italic" }) },
+    { key: "total",    label: "Total Uses",        fn: r => fmt$(r.uses.total),
+      style: () => ({ fontWeight:700 }), divider: true },
+    { key: "teDraw",   label: "TE Loan Draw",      fn: r => r.sources['te_loan'] ? fmt$(r.sources['te_loan']) : "—",
+      style: () => ({ color:"#1a3a6b" }) },
+    { key: "taxDraw",  label: "Taxable Draw",       fn: r => r.sources['taxable_loan'] ? fmt$(r.sources['taxable_loan']) : "—",
+      style: () => ({ color:"#4a6b9a" }) },
+    { key: "teBal",    label: "TE Balance",         fn: r => fmt$(r.teLoanBalance),
+      style: () => ({ color:"#1a3a6b", fontWeight:600 }) },
+    { key: "surplus",  label: "Surplus / (Gap)",    fn: r => r.surplus >= -100 ? fmt$(r.surplus) : `(${fmt$(Math.abs(r.surplus))})`,
+      style: r => ({ color: r.surplus >= -100 ? "#1a6b3c" : "#8B2500", fontWeight:600 }) },
+  ];
+
+  const cellStyle = (align = "right", extra = {}) => ({
+    padding:"4px 8px", textAlign:align, fontSize:10, fontFamily:"Inter, sans-serif",
+    whiteSpace:"nowrap", borderBottom:"1px solid #f5f5f5", minWidth:colW, ...extra,
+  });
 
   return (
     <div style={{ background:"white", border:"1px solid #e0e0e0", borderRadius:6, overflow:"hidden" }}>
-      <div
-        onClick={() => setCollapsed(v => !v)}
+      <div onClick={() => setCollapsed(v => !v)}
         style={{ display:"flex", justifyContent:"space-between", alignItems:"center",
           padding:"8px 14px", background:"#fafafa", cursor:"pointer",
           borderBottom:"1px solid #e0e0e0" }}>
@@ -368,60 +413,61 @@ function MonthlyTable({ rows, sources }) {
           letterSpacing:"0.08em" }}>
           {collapsed ? "▸" : "▾"} Monthly Cash Flow — {rows.length} Months
         </span>
-        <span style={{ fontSize:8, color:"#aaa" }}>
-          {collapsed ? "Click to expand" : "Click to collapse"}
-        </span>
+        <span style={{ fontSize:8, color:"#aaa" }}>{collapsed ? "Click to expand" : "Click to collapse"}</span>
       </div>
 
       {!collapsed && (
         <div style={{ overflowX:"auto" }}>
-          <table style={{ width:"100%", borderCollapse:"collapse", fontSize:10,
-            fontFamily:"Inter, sans-serif" }}>
+          <table style={{ borderCollapse:"collapse", fontSize:10, fontFamily:"Inter, sans-serif" }}>
             <thead>
-              <tr style={{ background:"#f8f8f8" }}>
-                {th("Mo", "center")}
-                {th("Period", "left")}
-                {th("Hard Costs")}
-                {th("Soft Costs")}
-                {th("Interest")}
-                {th("Total Uses")}
-                {th("TE Loan Draw")}
-                {th("TE Balance")}
-                {th("Surplus")}
+              <tr style={{ background:"#f5f5f5", borderBottom:"2px solid #e0e0e0" }}>
+                {/* Row label header */}
+                <th style={{ padding:"5px 10px", textAlign:"left", fontSize:8, color:"#888",
+                  fontWeight:700, textTransform:"uppercase", letterSpacing:"0.06em",
+                  position:"sticky", left:0, background:"#f5f5f5", zIndex:2,
+                  minWidth:labelW, borderRight:"2px solid #e0e0e0" }}>
+                  Category
+                </th>
+                {/* Month columns */}
+                {rows.map((r, i) => (
+                  <th key={i} style={{ padding:"4px 6px", textAlign:"center", fontSize:8,
+                    color: PERIOD_COLORS[r.period] || "#888", fontWeight:700,
+                    minWidth:colW, borderBottom:"1px solid #e0e0e0",
+                    background: i % 2 === 0 ? "#f5f5f5" : "#f0f0f0" }}>
+                    {`Mo ${r.month}`}
+                  </th>
+                ))}
               </tr>
             </thead>
             <tbody>
-              {rows.map((r, i) => (
-                <tr key={i} style={{ background: i % 2 === 0 ? "white" : "#fdfcfb" }}>
-                  {td(r.month, { align:"center", color:"#aaa" })}
-                  <td style={{ padding:"4px 8px", fontSize:10, fontWeight:600,
-                    color: periodColors[r.period], borderBottom:"1px solid #f5f5f5" }}>
-                    {r.period}
+              {rowDefs.map((rowDef, ri) => (
+                <tr key={rowDef.key} style={{
+                  background: ri % 2 === 0 ? "white" : "#fafafa",
+                  borderTop: rowDef.divider ? "2px solid #ddd" : "none",
+                }}>
+                  {/* Label cell — sticky */}
+                  <td style={{ padding:"4px 10px", fontSize:10, color:"#888",
+                    fontWeight:600, position:"sticky", left:0, zIndex:1,
+                    background: ri % 2 === 0 ? "white" : "#fafafa",
+                    borderRight:"2px solid #e0e0e0", whiteSpace:"nowrap" }}>
+                    {rowDef.label}
                   </td>
-                  {td(r.uses.hardCosts > 0 ? fmt$(r.uses.hardCosts) : "—", { color:"#666" })}
-                  {td((r.uses.softCosts + r.uses.acquisition + r.uses.orgCosts + r.uses.devFeeCash + r.uses.financingPerm + r.uses.financingConst) > 0
-                    ? fmt$(r.uses.softCosts + r.uses.acquisition + r.uses.orgCosts + r.uses.devFeeCash + r.uses.financingPerm + r.uses.financingConst)
-                    : "—", { color:"#666" })}
-                  {td(r.uses.interest > 0 ? fmt$(r.uses.interest) : "—", { color:"#5a3a00" })}
-                  {td(fmt$(r.uses.total), { bold: true })}
-                  {td(r.sources['te_loan'] ? fmt$(r.sources['te_loan']) : "—", { color:"#1a3a6b" })}
-                  {td(fmt$(r.teLoanBalance), { color:"#1a3a6b" })}
-                  {td(r.surplus >= 0 ? fmt$(r.surplus) : `(${fmt$(Math.abs(r.surplus))})`,
-                    { color: r.surplus >= -100 ? "#1a6b3c" : "#8B2500" })}
+                  {/* Data cells */}
+                  {rows.map((r, ci) => {
+                    const val   = rowDef.fn(r);
+                    const style = rowDef.style ? rowDef.style(r) : {};
+                    return (
+                      <td key={ci} style={{ ...cellStyle("right"),
+                        background: ci % 2 === 0 ? (ri % 2 === 0 ? "white" : "#fafafa") : "#fdf9f5",
+                        ...style }}>
+                        {val}
+                      </td>
+                    );
+                  })}
                 </tr>
               ))}
             </tbody>
           </table>
-          {rows.length > 10 && (
-            <div style={{ padding:"8px 14px", textAlign:"center" }}>
-              <button onClick={() => setShowAll(v => !v)}
-                style={{ background:"none", border:"1px solid #e0e0e0", borderRadius:3,
-                  padding:"3px 12px", fontSize:9, color:"#888", cursor:"pointer",
-                  fontFamily:"Inter, sans-serif" }}>
-                {showAll ? "Show fewer" : `Show all ${rows.length} months`}
-              </button>
-            </div>
-          )}
         </div>
       )}
     </div>
@@ -563,7 +609,7 @@ export default function ConstructionCFPanel({ onInterestUpdate }) {
     taxableRate,
     teLoanMax,
     taxableLoanMax,
-    hardCostPeak:       (cf.hard_cost_peak_month || 14) - 1, // 0-based
+    drawCurve:          cf.draw_curve_hard_costs || "medium",
   };
 
   // ── Run convergence ──────────────────────────────────────────────────────────
@@ -664,11 +710,21 @@ export default function ConstructionCFPanel({ onInterestUpdate }) {
             <div style={{ borderTop:"1px solid #f0f0f0", paddingTop:10, marginTop:4 }}>
               <div style={{ fontSize:9, fontWeight:700, color:"#1a3a6b", textTransform:"uppercase",
                 letterSpacing:"0.08em", marginBottom:8 }}>Spend-Down (S-Curve)</div>
-              <FieldRow label="Hard Cost Peak Month"
-                note={`Peak spend in month ${cf.hard_cost_peak_month} of ${cf.construction_period_months}`}>
-                <NumInput value={cf.hard_cost_peak_month} step={1}
-                  min={1} max={cf.construction_period_months}
-                  onChange={v => update({ hard_cost_peak_month: v })} width={60} />
+              <FieldRow label="Hard Cost Draw Curve" note="Shape of monthly spend distribution">
+                <div style={{ display:"flex", gap:4 }}>
+                  {["flat","medium","steep"].map(shape => (
+                    <button key={shape} onClick={() => update({ draw_curve_hard_costs: shape })}
+                      style={{ padding:"4px 10px", borderRadius:4, border:"1px solid",
+                        borderColor: (cf.draw_curve_hard_costs||"medium") === shape ? "#1a3a6b" : "#e0e0e0",
+                        background: (cf.draw_curve_hard_costs||"medium") === shape ? "#1a3a6b" : "white",
+                        color: (cf.draw_curve_hard_costs||"medium") === shape ? "white" : "#666",
+                        fontSize:10, fontFamily:"Inter, sans-serif", cursor:"pointer",
+                        fontWeight: (cf.draw_curve_hard_costs||"medium") === shape ? 700 : 400,
+                        textTransform:"capitalize" }}>
+                      {shape}
+                    </button>
+                  ))}
+                </div>
               </FieldRow>
             </div>
 
@@ -815,36 +871,50 @@ export default function ConstructionCFPanel({ onInterestUpdate }) {
                 />
               </div>
 
-              {/* Interest delta vs Module 2A estimate */}
-              {(() => {
-                const delta = result.totalConstInterest - startingInterestEst;
-                const pct = Math.abs(delta / startingInterestEst);
-                return pct > 0.01 ? (
-                  <div style={{ background: delta > 0 ? "#fce8e3" : "#f0f9f4",
-                    border:`1px solid ${delta > 0 ? "#f5c2b0" : "#b8dfc8"}`,
-                    borderRadius:6, padding:"10px 14px", marginBottom:16 }}>
-                    <div style={{ fontSize:10, fontWeight:700,
-                      color: delta > 0 ? "#8B2500" : "#1a6b3c" }}>
-                      {delta > 0 ? "↑" : "↓"} Interest {delta > 0 ? "Higher" : "Lower"} Than Module 2A Estimate
-                    </div>
-                    <div style={{ fontSize:9, color:"#666", marginTop:4 }}>
-                      Calculated: {fmt$(result.totalConstInterest)} · 
-                      Estimate was: {fmt$(startingInterestEst)} · 
-                      Delta: {fmt$(Math.abs(delta))} ({fmtPct1(pct)})
-                    </div>
-                    <div style={{ fontSize:9, color:"#888", marginTop:4 }}>
-                      Dev Budget has been updated with the converged interest figure.
-                      TDC will adjust automatically.
-                    </div>
-                  </div>
-                ) : (
-                  <div style={{ background:"#f0f9f4", border:"1px solid #b8dfc8",
-                    borderRadius:6, padding:"8px 14px", marginBottom:16, fontSize:9,
-                    color:"#1a6b3c" }}>
-                    ✓ Converged interest matches Module 2A estimate within 1%
-                  </div>
-                );
-              })()}
+              {/* Feedback loop — show what was pushed back to Module 2A */}
+              <div style={{ background:"#f0f3f9", border:"1px solid #b8c8e0",
+                borderRadius:6, padding:"12px 16px", marginBottom:16 }}>
+                <div style={{ fontSize:9, fontWeight:700, color:"#1a3a6b",
+                  textTransform:"uppercase", letterSpacing:"0.07em", marginBottom:10 }}>
+                  ↑ Pushed to Dev Budget (Module 2A)
+                </div>
+                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
+                  {[
+                    { label:"Construction Interest", before: startingInterestEst, after: result.totalConstInterest },
+                    { label:"Lease-Up Interest",     before: a.leaseup_interest_est || 1987588, after: result.totalLeaseupInterest },
+                  ].map(r => {
+                    const delta = r.after - r.before;
+                    const changed = Math.abs(delta) > 1;
+                    return (
+                      <div key={r.label} style={{ background:"white", borderRadius:4,
+                        padding:"8px 10px", border:"1px solid #d0dae8" }}>
+                        <div style={{ fontSize:8, color:"#888", marginBottom:4 }}>{r.label}</div>
+                        {changed ? (
+                          <>
+                            <div style={{ fontSize:9, color:"#aaa", textDecoration:"line-through" }}>
+                              Was: {fmt$(r.before)}
+                            </div>
+                            <div style={{ fontSize:13, fontWeight:700,
+                              color: delta > 0 ? "#8B2500" : "#1a6b3c" }}>
+                              Now: {fmt$(r.after)}
+                              <span style={{ fontSize:9, fontWeight:400, marginLeft:6 }}>
+                                ({delta > 0 ? "+" : ""}{fmt$(delta)})
+                              </span>
+                            </div>
+                          </>
+                        ) : (
+                          <div style={{ fontSize:13, fontWeight:700, color:"#1a6b3c" }}>
+                            ✓ {fmt$(r.after)} — unchanged
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+                <div style={{ fontSize:8, color:"#888", marginTop:8 }}>
+                  TDC in Dev Budget recalculates automatically. Run Convergence again if you change timeline or rates.
+                </div>
+              </div>
 
               {/* Monthly table */}
               <MonthlyTable rows={result.rows} sources={[]} />
@@ -852,25 +922,35 @@ export default function ConstructionCFPanel({ onInterestUpdate }) {
               {/* S-curve visualization */}
               <div style={{ background:"white", border:"1px solid #e0e0e0", borderRadius:6,
                 padding:"14px 16px", marginTop:14 }}>
-                <div style={{ fontSize:9, fontWeight:700, color:"#888", textTransform:"uppercase",
-                  letterSpacing:"0.07em", marginBottom:10 }}>
-                  Hard Cost Draw — S-Curve Distribution
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center",
+                  marginBottom:10 }}>
+                  <div style={{ fontSize:9, fontWeight:700, color:"#888", textTransform:"uppercase",
+                    letterSpacing:"0.07em" }}>Hard Cost Draw — {(cf.draw_curve_hard_costs||"medium").charAt(0).toUpperCase() + (cf.draw_curve_hard_costs||"medium").slice(1)} Curve</div>
+                  <div style={{ fontSize:8, color:"#aaa" }}>
+                    {cf.draw_curve_hard_costs === "flat" ? "Equal spend every month" :
+                     cf.draw_curve_hard_costs === "steep" ? "Slow start → fast middle → slow finish" :
+                     "Gradual ramp → peak → taper"}
+                  </div>
                 </div>
                 <div style={{ display:"flex", alignItems:"flex-end", gap:2, height:60 }}>
-                  {generateSCurve(cf.construction_period_months, (cf.hard_cost_peak_month || 14) - 1)
-                    .map((v, i) => (
-                      <div key={i}
-                        title={`Month ${i+1}: ${fmtPct1(v)}`}
-                        style={{ flex:1, background: i === (cf.hard_cost_peak_month - 1) ? "#8B2500" : "#d0d8e8",
-                          height:`${Math.max(4, v * 600)}px`,
-                          borderRadius:"2px 2px 0 0", minWidth:4 }}
-                      />
-                    ))}
+                  {generateSCurve(cf.construction_period_months, cf.draw_curve_hard_costs || "medium")
+                    .map((v, i) => {
+                      const maxV = generateSCurve(cf.construction_period_months, cf.draw_curve_hard_costs || "medium")
+                        .reduce((a, b) => Math.max(a, b), 0);
+                      const isPeak = v >= maxV * 0.99;
+                      return (
+                        <div key={i}
+                          title={`Month ${i+1}: ${fmtPct1(v)}`}
+                          style={{ flex:1, background: isPeak ? "#8B2500" : "#d0d8e8",
+                            height:`${Math.max(4, (v / maxV) * 56)}px`,
+                            borderRadius:"2px 2px 0 0", minWidth:2 }}
+                        />
+                      );
+                    })}
                 </div>
                 <div style={{ display:"flex", justifyContent:"space-between", fontSize:8,
                   color:"#aaa", marginTop:4 }}>
                   <span>Month 1</span>
-                  <span style={{ color:"#8B2500" }}>Peak: Month {cf.hard_cost_peak_month}</span>
                   <span>Month {cf.construction_period_months}</span>
                 </div>
               </div>

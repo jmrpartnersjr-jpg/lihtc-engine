@@ -29,7 +29,7 @@
  */
 
 import { createContext, useContext, useReducer, useCallback, useRef, useEffect } from 'react'
-import { supabase } from '../supabase'
+import { supabase } from '../lib/supabase'
 
 // ─────────────────────────────────────────────────────────────
 // DEFAULT INPUT SHAPES
@@ -192,11 +192,19 @@ const DEFAULT_MODULE_STATES = {
 
   construction_cf: {
     construction_period_months: 24,
-    leaseup_period_months: 7,
-    construction_start_date: '2026-11-21',
-    draw_curve_hard_costs: 'medium',
-    draw_curve_soft_costs: 'medium',
-    custom_draw_schedule: null,
+    leaseup_period_months:      7,
+    stabilized_months:          4,
+    construction_start_date:    '2026-11-21',
+    draw_curve_hard_costs:      'medium',
+    draw_curve_soft_costs:      'flat',
+    custom_draw_schedule:       null,
+    te_rate:                    0.0585,
+    taxable_rate:               0.0585,
+    te_loan_override:           null,
+    taxable_loan_override:      null,
+    closing_soft_pct:           0.27,
+    closing_org_pct:            0.30,
+    closing_dev_fee_pct:        0.25,
     sources: [
       { name: 'Tax Exempt Construction Loan',  mode: 'loan',      priority: null, amount: 32941402, schedule: null },
       { name: 'Taxable Construction Loan',      mode: 'loan',      priority: null, amount: 17814416, schedule: null },
