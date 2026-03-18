@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef } from "react";
 import { useLihtc } from "./context/LihtcContext.jsx";
+import { computeBudgetCalcs, computeLIHTC } from "./lihtcCalcs.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // MODULE 4 — DEBT STACK
@@ -814,68 +815,23 @@ export default function DebtPanel() {
   const unitMix = moduleStates.unit_mix;
   const totalUnits = (unitMix?.rows ?? []).reduce((s, r) => s + (r.count || 0), 0) || 175;
 
-  // Lightweight TDC calc (mirrors DevBudget)
-  let tdc = 67824621, deferredDevFee = 5927282, aggrBasis = null;
-  if (budget?.sections && budget?.assumptions) {
-    const a = budget.assumptions;
-    const s = budget.sections;
-    const hcAll    = s.hard_costs?.filter(l => l.type==="input").reduce((sum,l)=>sum+(l.amount||0),0)||0;
-    const ppBond   = s.hard_costs?.find(l=>l.label?.toLowerCase().includes("p&p")||l.label?.toLowerCase().includes("bond premium"));
-    const ppAmt    = ppBond?.type==="input"?(ppBond?.amount||0):0;
-    const hcBase   = hcAll - ppAmt;
-    const hcCont   = hcBase*(a.hc_contingency_pct||0);
-    const hcTax    = (hcBase+hcCont)*(a.sales_tax_pct||0);
-    const hcTotal  = hcAll+hcCont+hcTax;
-    const scAll    = s.soft_costs?.filter(l=>l.type==="input").reduce((sum,l)=>sum+(l.amount||0),0)||0;
-    const scTotal  = scAll+(scAll*(a.sc_contingency_pct||0));
-    const finAll   = s.financing?.filter(l=>l.type==="input").reduce((sum,l)=>sum+(l.amount||0),0)||0;
-    const combCL   = (a.const_loan_amount||0)+(a.taxable_loan_amount||0);
-    const finTotal = finAll+(combCL*(a.const_origination_pct||0))+((a.perm_loan_amount||0)*(a.perm_origination_pct||0))+(a.const_interest_est||0)+(a.leaseup_interest_est||0);
-    const orgAll   = s.org_reserves?.filter(l=>l.type==="input").reduce((sum,l)=>sum+(l.amount||0),0)||0;
-    const orgTotal = orgAll+(totalUnits*(a.rep_reserve_per_unit??350))+(a.op_reserve_fallback??637500)+(a.ads_reserve_fallback??1110159);
-    const acqTotal = s.acquisition?.reduce((sum,l)=>sum+(l.amount||0),0)||4488000;
-    const subtotal = acqTotal+hcTotal+scTotal+finTotal+orgTotal;
-    tdc = subtotal+(subtotal*(a.dev_fee_pct||0.15));
-    deferredDevFee = subtotal*(a.dev_fee_pct||0.15)*(1-(a.cash_fee_pct||0.33));
-    // Aggregate basis — sum of bond_basis lines + dev fee (100% in bond basis)
-    const _devFee = subtotal*(a.dev_fee_pct||0.15);
-    aggrBasis = Object.values(s).flat().reduce((sum, l) => {
-      if (!l.bond_basis) return sum;
-      // For calculated lines, use the same resolveAmount logic
-      let amt = l.amount || 0;
-      if (l.type === 'pct_loan_const') amt = ((a.const_loan_amount||0)+(a.taxable_loan_amount||0))*(a.const_origination_pct||0);
-      else if (l.type === 'pct_loan_perm') amt = 0; // perm orig not in bond basis
-      else if (l.type === 'est_2b') amt = l.label?.toLowerCase().includes('lease') ? 0 : (a.const_interest_est||0);
-      else if (l.type === 'pct_hc') amt = l.label?.toLowerCase().includes('tax') ? salesTax : contingency;
-      else if (l.type === 'pct_sc') amt = scContingency;
-      return sum + (isNaN(amt) ? 0 : amt);
-    }, _devFee); // dev fee 100% in bond basis
-  }
+  // Budget calcs from shared utility — single source of truth
+  const budgetCalcs = computeBudgetCalcs(budget, totalUnits);
+  const tdc = budgetCalcs.tdc;
+  const deferredDevFee = budgetCalcs.deferredDevFee;
+  const aggrBasis = budgetCalcs.aggregateBasis;
 
-  // Read LIHTC equity from Module 3 — must come after TDC is computed
+  // LIHTC equity from shared utility — same calculation as Tax Credit module
   const lihtcInputs = moduleStates.lihtc || {};
-  let lihtcEquity = null, stateEquity = null;
-  if (lihtcInputs.applicable_pct !== undefined || lihtcInputs.investor_price !== undefined) {
-    const _li = { ...{
-      credit_type:"4pct", applicable_pct:0.04, basis_boost:true, boost_factor:1.30,
-      applicable_fraction:1.0, credit_period:10, investor_price:0.82,
-      non_basis_costs:6527411, commercial_costs:0, federal_grants:0, historic_reduction:0,
-      state_credit_applies:false, state_credit_annual:0, state_credit_period:10, state_credit_price:0,
-    }, ...lihtcInputs };
-    const _acqTotal  = budget?.sections?.acquisition?.reduce((s,l)=>s+(l.amount||0),0) || 4488000;
-    const _adjBasis  = tdc - _acqTotal
-      - (_li.non_basis_costs||0) - (_li.commercial_costs||0)
-      - (_li.federal_grants||0)  - (_li.historic_reduction||0);
-    const _boosted   = _li.basis_boost ? _adjBasis * (_li.boost_factor||1.3) : _adjBasis;
-    const _qualified = _boosted * (_li.applicable_fraction||1);
-    const _rate      = _li.credit_type==="9pct" ? 0.09 : Math.max(0.04, _li.applicable_pct||0.04);
-    const _annual    = _qualified * _rate;
-    const _total     = _annual * (_li.credit_period||10);
-    lihtcEquity      = _total * (_li.investor_price||0);
-    stateEquity      = _li.state_credit_applies
-      ? (_li.state_credit_annual||0) * (_li.state_credit_period||10) * (_li.state_credit_price||0)
-      : 0;
-  }
+  const lihtcDefaults = {
+    credit_type:"4pct", applicable_pct:0.04, basis_boost:true, boost_factor:1.30,
+    applicable_fraction:1.0, credit_period:10, investor_price:0.82,
+    non_basis_costs:6527411, commercial_costs:0, federal_grants:0, historic_reduction:0,
+    state_credit_applies:false, state_credit_annual:0, state_credit_period:10, state_credit_price:0,
+  };
+  const lihtcResult = computeLIHTC({ ...lihtcDefaults, ...lihtcInputs }, budgetCalcs, totalUnits);
+  const lihtcEquity = lihtcResult.equityRaised;
+  const stateEquity = lihtcResult.stateEquity;
 
   // Sync DDF amount from budget calc into the subdebt entry
   // This ensures the DDF entry always reflects the live budget calculation
