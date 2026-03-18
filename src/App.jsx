@@ -5,6 +5,7 @@ import DebtPanel from "./Debt.jsx";
 import TaxCreditPanel from "./TaxCredit.jsx";
 import DevBudgetPanel from "./DevBudget.jsx";
 import CapitalStackPanel from "./CapitalStack.jsx";
+import ConstructionCFPanel from "./ConstructionCF.jsx";
 import SourcesUsesPanel from "./SourcesUses.jsx";
 
 // ─── CHANGE 1 of 4: Import context hooks and new components ──────────────────
@@ -670,6 +671,7 @@ export default function App() {
     {key:"unitmix",   label:"Unit Mix"},
     {key:"debt",      label:"Debt"},
     {key:"devbudget", label:"Dev Budget"},
+    {key:"constcf",   label:"Const. CF"},
     {key:"taxcredit", label:"Tax Credit"},
     {key:"stack",     label:"Capital Stack"},
     {key:"sources",   label:"Sources & Uses"},
@@ -777,6 +779,9 @@ export default function App() {
             <DevBudgetPanel
               onBudgetUpdate={(eligibleBasis, tdc, budget) => { setBudgetBasis({ eligibleBasis, tdc, budget }); setTab("taxcredit"); }}
             />
+          )}
+          {tab==="constcf" && (
+            <ConstructionCFPanel />
           )}
           {tab==="taxcredit" && (
             <TaxCreditPanel />
