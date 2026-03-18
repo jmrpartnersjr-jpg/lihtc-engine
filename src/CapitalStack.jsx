@@ -27,12 +27,12 @@ function InlineText({ value, onChange, placeholder }) {
     <input autoFocus value={raw} onChange={e=>setRaw(e.target.value)} onBlur={commit}
       onKeyDown={e=>{ if(e.key==="Enter") commit(); if(e.key==="Escape"){setRaw(value||"");setEditing(false);}}}
       style={{ padding:"2px 6px", border:"1px solid #1a3a6b", borderRadius:3, fontSize:11, outline:"none",
-        fontFamily:"'DM Mono',monospace", width:140 }} />
+        fontFamily:"Inter, sans-serif", width:140 }} />
   );
   return (
     <span onClick={()=>{setRaw(value||"");setEditing(true);}}
       style={{ cursor:"pointer", fontSize:11, color:value?"#333":"#ccc",
-        fontFamily:"'DM Mono',monospace", padding:"2px 4px", borderRadius:2, border:"1px solid transparent" }}
+        fontFamily:"Inter, sans-serif", padding:"2px 4px", borderRadius:2, border:"1px solid transparent" }}
       onMouseEnter={e=>e.target.style.border="1px solid #e0e0e0"}
       onMouseLeave={e=>e.target.style.border="1px solid transparent"}>
       {value||placeholder||"—"}
@@ -48,11 +48,11 @@ function InlineAmt({ value, onChange }) {
     <input autoFocus type="number" value={raw} onChange={e=>setRaw(e.target.value)} onBlur={commit}
       onKeyDown={e=>{if(e.key==="Enter")commit();if(e.key==="Escape")setEditing(false);}}
       style={{ width:120, padding:"2px 6px", border:"1px solid #1a3a6b", borderRadius:3,
-        fontSize:12, fontFamily:"'DM Mono',monospace", textAlign:"right", outline:"none" }} />
+        fontSize:12, fontFamily:"Inter, sans-serif", textAlign:"right", outline:"none" }} />
   );
   return (
     <span onClick={()=>{setRaw(String(Math.round(value||0)));setEditing(true);}}
-      style={{ cursor:"pointer", fontFamily:"'DM Mono',monospace", fontSize:12, fontWeight:700,
+      style={{ cursor:"pointer", fontFamily:"Inter, sans-serif", fontSize:12, fontWeight:700,
         padding:"2px 4px", borderRadius:2, border:"1px solid transparent" }}
       onMouseEnter={e=>e.target.style.border="1px solid #e0e0e0"}
       onMouseLeave={e=>e.target.style.border="1px solid transparent"}>
@@ -74,9 +74,9 @@ function CreditSensitivity({ annualCredit, creditYears, basePrice }) {
             <div key={p} style={{ flex:1, padding:"8px 6px", textAlign:"center",
               background:isBase?"#f0f3f9":"white", borderLeft:p===prices[0]?"none":"1px solid #e8e8e8" }}>
               <div style={{ fontSize:9, color:isBase?"#1a3a6b":"#aaa", fontWeight:isBase?700:400,
-                fontFamily:"'DM Mono',monospace" }}>{(p*100).toFixed(0)}¢</div>
+                fontFamily:"Inter, sans-serif" }}>{(p*100).toFixed(0)}¢</div>
               <div style={{ fontSize:11, fontWeight:isBase?700:500, color:isBase?"#1a3a6b":"#111",
-                fontFamily:"'DM Mono',monospace", marginTop:2 }}>{fmtM(eq)}</div>
+                fontFamily:"Inter, sans-serif", marginTop:2 }}>{fmtM(eq)}</div>
             </div>
           );
         })}
@@ -171,7 +171,7 @@ export default function CapitalStackTab({ scenario, baseFA, budgetWithCalc }) {
           <div key={m.label} style={{ flex:1, minWidth:120, padding:"10px 14px", background:"white",
             border:"1px solid #e0e0e0", borderRadius:5 }}>
             <div style={{ fontSize:9, color:"#aaa", textTransform:"uppercase", letterSpacing:"0.06em", marginBottom:4 }}>{m.label}</div>
-            <div style={{ fontFamily:"'DM Mono',monospace", fontSize:15, fontWeight:700, color:m.color }}>{m.value}</div>
+            <div style={{ fontFamily:"Inter, sans-serif", fontSize:15, fontWeight:700, color:m.color }}>{m.value}</div>
           </div>
         ))}
       </div>
@@ -207,7 +207,7 @@ export default function CapitalStackTab({ scenario, baseFA, budgetWithCalc }) {
               {["Source","Lender / Agency","Amount","% of TDC",""].map(h=>(
                 <th key={h} style={{ padding:"6px 12px", textAlign:h==="Amount"||h==="% of TDC"?"right":"left",
                   fontSize:8, color:"#888", textTransform:"uppercase", letterSpacing:"0.08em",
-                  fontFamily:"'DM Mono',monospace" }}>{h}</th>
+                  fontFamily:"Inter, sans-serif" }}>{h}</th>
               ))}
             </tr>
           </thead>
@@ -231,7 +231,7 @@ export default function CapitalStackTab({ scenario, baseFA, budgetWithCalc }) {
                       <div style={{ display:"flex", alignItems:"center", gap:8 }}>
                         <div style={{ width:6, height:6, borderRadius:"50%", background:color, flexShrink:0 }} />
                         <div>
-                          <div style={{ fontSize:11, fontWeight:600, color:"#111", fontFamily:"'DM Mono',monospace" }}>
+                          <div style={{ fontSize:11, fontWeight:600, color:"#111", fontFamily:"Inter, sans-serif" }}>
                             {src.name}
                             {src.is_calculated && <span style={{ marginLeft:5, fontSize:7, background:"#f0f3f9", color:"#1a3a6b", padding:"1px 4px", borderRadius:2, fontWeight:700 }}>CALC</span>}
                           </div>
@@ -246,11 +246,11 @@ export default function CapitalStackTab({ scenario, baseFA, budgetWithCalc }) {
                     <td style={{ padding:"9px 12px", textAlign:"right" }}>
                       {isSoft
                         ? <InlineAmt value={amt} onChange={v=>updateAndSave(src.id,{amount:v})} />
-                        : <span style={{ fontFamily:"'DM Mono',monospace", fontSize:12, fontWeight:700 }}>{fmtM(amt)}</span>
+                        : <span style={{ fontFamily:"Inter, sans-serif", fontSize:12, fontWeight:700 }}>{fmtM(amt)}</span>
                       }
                     </td>
                     <td style={{ padding:"9px 12px", textAlign:"right" }}>
-                      <span style={{ fontFamily:"'DM Mono',monospace", fontSize:11, color:"#888" }}>{fmtPct(pctTDC)}</span>
+                      <span style={{ fontFamily:"Inter, sans-serif", fontSize:11, color:"#888" }}>{fmtPct(pctTDC)}</span>
                     </td>
                     <td style={{ padding:"9px 12px" }}>
                       <div style={{ height:6, background:"#f0f0f0", borderRadius:3, overflow:"hidden", width:80 }}>
@@ -266,13 +266,13 @@ export default function CapitalStackTab({ scenario, baseFA, budgetWithCalc }) {
             <tr style={{ borderTop:"2px solid #111" }}>
               <td style={{ padding:"10px 12px", fontWeight:700, fontSize:12, fontFamily:"'Playfair Display',serif" }}>Total Sources</td>
               <td />
-              <td style={{ padding:"10px 12px", textAlign:"right", fontFamily:"'DM Mono',monospace", fontSize:14, fontWeight:700 }}>{fmtM(totalSources)}</td>
-              <td style={{ padding:"10px 12px", textAlign:"right", fontFamily:"'DM Mono',monospace", fontSize:11, color:"#888" }}>100%</td>
+              <td style={{ padding:"10px 12px", textAlign:"right", fontFamily:"Inter, sans-serif", fontSize:14, fontWeight:700 }}>{fmtM(totalSources)}</td>
+              <td style={{ padding:"10px 12px", textAlign:"right", fontFamily:"Inter, sans-serif", fontSize:11, color:"#888" }}>100%</td>
               <td />
             </tr>
             <tr>
               <td colSpan={5} style={{ padding:"4px 12px 8px", fontSize:10,
-                color:Math.abs(gap)<1000?"#1a6b3c":"#8B2500", fontFamily:"'DM Mono',monospace" }}>
+                color:Math.abs(gap)<1000?"#1a6b3c":"#8B2500", fontFamily:"Inter, sans-serif" }}>
                 {Math.abs(gap)<1000?"✓ Sources balance to TDC":`Gap vs TDC: ${fmtM(Math.abs(gap))} ${gap>0?"(overfunded)":"(shortfall)"}`}
                 <span style={{ color:"#aaa", marginLeft:12 }}>TDC: {fmtM(tdc)}</span>
               </td>

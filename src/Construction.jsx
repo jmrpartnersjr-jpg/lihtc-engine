@@ -21,12 +21,12 @@ function TrancheRow({ tranche, onUpdate, onRemove }) {
       <td style={{ padding:"5px 8px" }}>
         <input value={tranche.label} onChange={e => onUpdate("label", e.target.value)}
           style={{ width:"100%", padding:"3px 6px", border:"1px solid #e8e8e8", borderRadius:2,
-            fontSize:10, fontFamily:"'DM Mono',monospace", outline:"none" }} />
+            fontSize:10, fontFamily:"Inter, sans-serif", outline:"none" }} />
       </td>
       <td style={{ padding:"5px 8px" }}>
         <select value={tranche.type} onChange={e => onUpdate("type", e.target.value)}
           style={{ width:"100%", padding:"3px 6px", border:"1px solid #e8e8e8", borderRadius:2,
-            fontSize:10, fontFamily:"'DM Mono',monospace", outline:"none" }}>
+            fontSize:10, fontFamily:"Inter, sans-serif", outline:"none" }}>
           <option value="equity">LP Equity</option>
           <option value="gp_equity">GP Equity</option>
           <option value="bridge">Bridge / Conv.</option>
@@ -38,12 +38,12 @@ function TrancheRow({ tranche, onUpdate, onRemove }) {
         <input type="number" value={tranche.amount}
           onChange={e => onUpdate("amount", Number(e.target.value))}
           style={{ width:110, padding:"3px 6px", border:"1px solid #e8e8e8", borderRadius:2,
-            fontSize:10, fontFamily:"'DM Mono',monospace", textAlign:"right", outline:"none" }} />
+            fontSize:10, fontFamily:"Inter, sans-serif", textAlign:"right", outline:"none" }} />
       </td>
       <td style={{ padding:"5px 8px" }}>
         <select value={tranche.timing} onChange={e => onUpdate("timing", e.target.value)}
           style={{ width:"100%", padding:"3px 6px", border:"1px solid #e8e8e8", borderRadius:2,
-            fontSize:10, fontFamily:"'DM Mono',monospace", outline:"none" }}>
+            fontSize:10, fontFamily:"Inter, sans-serif", outline:"none" }}>
           <option value="closing">Construction Closing</option>
           <option value="50pct">50% Completion</option>
           <option value="breakeven">Breakeven / Stabilized</option>
@@ -68,18 +68,18 @@ function UsesRow({ item, onUpdate, onRemove }) {
       <td style={{ padding:"5px 8px" }}>
         <input value={item.label} onChange={e => onUpdate("label", e.target.value)}
           style={{ width:"100%", padding:"3px 6px", border:"1px solid #e8e8e8", borderRadius:2,
-            fontSize:10, fontFamily:"'DM Mono',monospace", outline:"none" }} />
+            fontSize:10, fontFamily:"Inter, sans-serif", outline:"none" }} />
       </td>
       <td style={{ padding:"5px 8px" }}>
         <input type="number" value={item.amount}
           onChange={e => onUpdate("amount", Number(e.target.value))}
           style={{ width:120, padding:"3px 6px", border:"1px solid #e8e8e8", borderRadius:2,
-            fontSize:10, fontFamily:"'DM Mono',monospace", textAlign:"right", outline:"none" }} />
+            fontSize:10, fontFamily:"Inter, sans-serif", textAlign:"right", outline:"none" }} />
       </td>
       <td style={{ padding:"5px 8px" }}>
         <select value={item.when} onChange={e => onUpdate("when", e.target.value)}
           style={{ width:"100%", padding:"3px 6px", border:"1px solid #e8e8e8", borderRadius:2,
-            fontSize:10, fontFamily:"'DM Mono',monospace", outline:"none" }}>
+            fontSize:10, fontFamily:"Inter, sans-serif", outline:"none" }}>
           <option value="closing">At Closing</option>
           <option value="during">During Construction</option>
           <option value="perm">At Perm Close</option>
@@ -192,7 +192,7 @@ export default function ConstructionPanel({ baseFA }) {
                 {id:nextId(t), label:"New Tranche", type:"equity", amount:0, timing:"closing"}])}
                 style={{ background:"#1a3a6b", color:"white", border:"none", padding:"4px 10px",
                   borderRadius:2, cursor:"pointer", fontSize:9, letterSpacing:"0.07em",
-                  textTransform:"uppercase", fontFamily:"'DM Mono',monospace" }}>
+                  textTransform:"uppercase", fontFamily:"Inter, sans-serif" }}>
                 + Add
               </button>
             </div>
@@ -213,9 +213,9 @@ export default function ConstructionPanel({ baseFA }) {
                 ))}
                 <tr style={{ borderTop:"2px solid #111", background:"#fafafa" }}>
                   <td colSpan={2} style={{ padding:"7px 8px", fontSize:10, fontWeight:700,
-                    fontFamily:"'DM Mono',monospace" }}>TOTAL EQUITY SOURCES</td>
+                    fontFamily:"Inter, sans-serif" }}>TOTAL EQUITY SOURCES</td>
                   <td style={{ padding:"7px 8px", fontSize:11, fontWeight:700,
-                    fontFamily:"'DM Mono',monospace", textAlign:"left" }}>{fmt$(totalTranches)}</td>
+                    fontFamily:"Inter, sans-serif", textAlign:"left" }}>{fmt$(totalTranches)}</td>
                   <td colSpan={2}/>
                 </tr>
               </tbody>
@@ -232,7 +232,7 @@ export default function ConstructionPanel({ baseFA }) {
                 {id:nextId(u), label:"New Use", amount:0, when:"during"}])}
                 style={{ background:"#1a3a6b", color:"white", border:"none", padding:"4px 10px",
                   borderRadius:2, cursor:"pointer", fontSize:9, letterSpacing:"0.07em",
-                  textTransform:"uppercase", fontFamily:"'DM Mono',monospace" }}>
+                  textTransform:"uppercase", fontFamily:"Inter, sans-serif" }}>
                 + Add
               </button>
             </div>
@@ -253,9 +253,9 @@ export default function ConstructionPanel({ baseFA }) {
                 ))}
                 <tr style={{ borderTop:"2px solid #111", background:"#fafafa" }}>
                   <td style={{ padding:"7px 8px", fontSize:10, fontWeight:700,
-                    fontFamily:"'DM Mono',monospace" }}>TOTAL USES</td>
+                    fontFamily:"Inter, sans-serif" }}>TOTAL USES</td>
                   <td style={{ padding:"7px 8px", fontSize:11, fontWeight:700,
-                    fontFamily:"'DM Mono',monospace" }}>{fmt$(totalUses)}</td>
+                    fontFamily:"Inter, sans-serif" }}>{fmt$(totalUses)}</td>
                   <td colSpan={2}/>
                 </tr>
               </tbody>
@@ -268,11 +268,11 @@ export default function ConstructionPanel({ baseFA }) {
               color:"#888", marginBottom:14 }}>Construction Loan Draw Schedule (S-Curve)</div>
             <ResponsiveContainer width="100%" height={180}>
               <BarChart data={drawData} margin={{top:0,right:10,left:0,bottom:0}}>
-                <XAxis dataKey="month" tick={{fontSize:8,fontFamily:"'DM Mono',monospace"}} />
+                <XAxis dataKey="month" tick={{fontSize:8,fontFamily:"Inter, sans-serif"}} />
                 <YAxis tickFormatter={v=>"$"+(v/1e6).toFixed(1)+"M"}
-                  tick={{fontSize:8,fontFamily:"'DM Mono',monospace"}} width={55} />
+                  tick={{fontSize:8,fontFamily:"Inter, sans-serif"}} width={55} />
                 <Tooltip formatter={(v,n)=>[fmt$(v),n]}
-                  contentStyle={{fontSize:10,fontFamily:"'DM Mono',monospace"}} />
+                  contentStyle={{fontSize:10,fontFamily:"Inter, sans-serif"}} />
                 <Bar dataKey="draw" name="Period Draw" fill="#1a3a6b" opacity={0.75} radius={[2,2,0,0]} />
                 <Bar dataKey="interest" name="Monthly Interest" fill="#8B2500" opacity={0.6} radius={[2,2,0,0]} />
               </BarChart>
@@ -294,7 +294,7 @@ export default function ConstructionPanel({ baseFA }) {
               <input type="number" value={constLoanAmt}
                 onChange={e=>setConstLoanAmt(Number(e.target.value))}
                 style={{ width:"100%", padding:"7px 10px", border:"1px solid #e0e0e0", borderRadius:3,
-                  fontSize:12, fontFamily:"'DM Mono',monospace", outline:"none" }} />
+                  fontSize:12, fontFamily:"Inter, sans-serif", outline:"none" }} />
               <div style={{ fontSize:9, color:"#aaa", marginTop:3 }}>{fmtPct(constLoanAmt/tdc)} of TDC</div>
             </div>
             <div style={{ marginBottom:12 }}>
@@ -302,7 +302,7 @@ export default function ConstructionPanel({ baseFA }) {
                 <span style={{ fontSize:10, color:"#666", textTransform:"uppercase",
                   letterSpacing:"0.05em" }}>Interest Rate</span>
                 <span style={{ fontSize:11, fontWeight:700, color:"#1a3a6b",
-                  fontFamily:"'DM Mono',monospace" }}>{constLoanRate.toFixed(2)}%</span>
+                  fontFamily:"Inter, sans-serif" }}>{constLoanRate.toFixed(2)}%</span>
               </div>
               <input type="range" min={400} max={900} step={5}
                 value={Math.round(constLoanRate*100)}
@@ -317,7 +317,7 @@ export default function ConstructionPanel({ baseFA }) {
                 <span style={{ fontSize:10, color:"#666", textTransform:"uppercase",
                   letterSpacing:"0.05em" }}>Construction Period</span>
                 <span style={{ fontSize:11, fontWeight:700, color:"#1a3a6b",
-                  fontFamily:"'DM Mono',monospace" }}>{constMonthsN} mo</span>
+                  fontFamily:"Inter, sans-serif" }}>{constMonthsN} mo</span>
               </div>
               <input type="range" min={12} max={30} step={1}
                 value={constMonthsN}
@@ -333,14 +333,14 @@ export default function ConstructionPanel({ baseFA }) {
               <input type="number" step={0.25} value={loanOriginFee}
                 onChange={e=>setLoanOriginFee(Number(e.target.value))}
                 style={{ width:"100%", padding:"7px 10px", border:"1px solid #e0e0e0", borderRadius:3,
-                  fontSize:12, fontFamily:"'DM Mono',monospace", outline:"none" }} />
+                  fontSize:12, fontFamily:"Inter, sans-serif", outline:"none" }} />
               <div style={{ fontSize:9, color:"#aaa", marginTop:3 }}>
                 % → {fmt$(constLoanAmt*loanOriginFee/100)}
               </div>
             </div>
             <div style={{ background:"#f8f9fc", borderRadius:4, padding:"8px 10px", marginTop:6 }}>
               <div style={{ fontSize:8, color:"#aaa", marginBottom:4 }}>Est. Total Interest</div>
-              <div style={{ fontSize:13, fontWeight:700, fontFamily:"'DM Mono',monospace",
+              <div style={{ fontSize:13, fontWeight:700, fontFamily:"Inter, sans-serif",
                 color:"#8B2500" }}>{fmt$(constInterest)}</div>
               <div style={{ fontSize:8, color:"#aaa" }}>avg 55% drawn × {constMonthsN}mo</div>
             </div>
@@ -365,7 +365,7 @@ export default function ConstructionPanel({ baseFA }) {
                   fontWeight: r.bold?700:400, textTransform:"uppercase",
                   letterSpacing:"0.04em" }}>{r.label}</span>
                 <span style={{ fontSize: r.bold?13:11, fontWeight: r.bold?700:500,
-                  color: r.color||"#111", fontFamily:"'DM Mono',monospace" }}>
+                  color: r.color||"#111", fontFamily:"Inter, sans-serif" }}>
                   {fmt$(r.value)}
                 </span>
               </div>
@@ -378,7 +378,7 @@ export default function ConstructionPanel({ baseFA }) {
                 marginBottom:3 }}>
                 {Math.abs(gap)<10000 ? "✓ BALANCED" : gap<0 ? "⚑ SOURCES EXCEED USES" : "⚠ GAP — SOURCES SHORTAGE"}
               </div>
-              <div style={{ fontSize:13, fontWeight:700, fontFamily:"'DM Mono',monospace",
+              <div style={{ fontSize:13, fontWeight:700, fontFamily:"Inter, sans-serif",
                 color: Math.abs(gap)<10000?"#1a6b3c":gap<0?"#1a3a6b":"#8B2500" }}>
                 {gap > 0 ? "+" : ""}{fmt$(Math.abs(gap))}
               </div>
@@ -406,7 +406,7 @@ export default function ConstructionPanel({ baseFA }) {
                   padding:"5px 0", borderBottom:"1px solid #f8f8f8" }}>
                   <span style={{ fontSize:10, color:"#888" }}>{row.label}</span>
                   <span style={{ fontSize:11, fontWeight:500, color:"#111",
-                    fontFamily:"'DM Mono',monospace" }}>{fmt$(amt)}</span>
+                    fontFamily:"Inter, sans-serif" }}>{fmt$(amt)}</span>
                 </div>
               ) : null;
             })}

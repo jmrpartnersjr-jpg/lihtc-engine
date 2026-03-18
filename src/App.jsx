@@ -473,7 +473,7 @@ function Sparkline({ scenarios, baseFA, metricKey, label, fmt }) {
         {metricKey==="dscr"&&(
           <>
             <line x1={0} y1={toY(1.15)} x2={W} y2={toY(1.15)} stroke="#e0e0e0" strokeWidth={1} strokeDasharray="4 2"/>
-            <text x={W+3} y={toY(1.15)+3} fontSize={7} fill="#bbb" fontFamily="monospace">1.15x</text>
+            <text x={W+3} y={toY(1.15)+3} fontSize={7} fill="#bbb" fontFamily="Inter, sans-serif">1.15x</text>
           </>
         )}
         {allSeries.map((series,si)=>(
@@ -483,7 +483,7 @@ function Sparkline({ scenarios, baseFA, metricKey, label, fmt }) {
           </g>
         ))}
         {[1,5,10,15].map(yr=>(
-          <text key={yr} x={toX(yr-1)} y={H+14} textAnchor="middle" fontSize={7} fill="#bbb" fontFamily="monospace">Yr{yr}</text>
+          <text key={yr} x={toX(yr-1)} y={H+14} textAnchor="middle" fontSize={7} fill="#bbb" fontFamily="Inter, sans-serif">Yr{yr}</text>
         ))}
       </svg>
       <div style={{display:"flex",gap:10,marginTop:2,flexWrap:"wrap"}}>
@@ -681,7 +681,7 @@ export default function App() {
   ];
 
   return (
-    <div style={{display:"flex",height:"100vh",fontFamily:"'DM Mono',monospace",background:"#f5f5f3",overflow:"hidden"}}>
+    <div style={{display:"flex",height:"100vh",fontFamily:"Inter, sans-serif",background:"#f5f5f3",overflow:"hidden"}}>
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&family=Playfair+Display:wght@400;700&display=swap');
         *{box-sizing:border-box;margin:0;padding:0;}
@@ -719,7 +719,7 @@ export default function App() {
           {/* ── CHANGE 4 of 4: Tab buttons call notifyTabChange before switching ── */}
           {TABS.map(t=>(
             <button key={t.key} onClick={()=>{ notifyTabChange(t.key); setTab(t.key); }}
-              style={{background:tab===t.key?"white":"transparent",color:tab===t.key?"#111":"#888",border:"none",padding:"4px 11px",borderRadius:3,cursor:"pointer",fontSize:9,letterSpacing:"0.1em",textTransform:"uppercase",fontFamily:"'DM Mono',monospace",fontWeight:tab===t.key?700:400,whiteSpace:"nowrap"}}>
+              style={{background:tab===t.key?"white":"transparent",color:tab===t.key?"#111":"#888",border:"none",padding:"4px 11px",borderRadius:3,cursor:"pointer",fontSize:9,letterSpacing:"0.1em",textTransform:"uppercase",fontFamily:"Inter, sans-serif",fontWeight:tab===t.key?700:400,whiteSpace:"nowrap"}}>
               {t.label}
             </button>
           ))}
@@ -733,7 +733,7 @@ export default function App() {
           {/* Version history button */}
           <button
             onClick={() => setVersionPanelOpen(true)}
-            style={{background:"none",border:"1px solid #333",color:"#888",padding:"3px 10px",borderRadius:3,cursor:"pointer",fontSize:9,letterSpacing:"0.1em",textTransform:"uppercase",fontFamily:"'DM Mono',monospace",whiteSpace:"nowrap"}}
+            style={{background:"none",border:"1px solid #333",color:"#888",padding:"3px 10px",borderRadius:3,cursor:"pointer",fontSize:9,letterSpacing:"0.1em",textTransform:"uppercase",fontFamily:"Inter, sans-serif",whiteSpace:"nowrap"}}
           >
             Versions
           </button>
@@ -756,7 +756,7 @@ export default function App() {
               <span style={{fontSize:8,color:"#c47a3a",fontWeight:700,letterSpacing:"0.06em"}}>CREDIT OVERRIDE</span>
             </div>
           )}
-          <button onClick={addScenario} style={{background:"#1a6b3c",color:"white",border:"none",padding:"4px 12px",borderRadius:3,cursor:"pointer",fontSize:9,letterSpacing:"0.1em",textTransform:"uppercase",fontFamily:"'DM Mono',monospace",fontWeight:700}}>+ Add</button>
+          <button onClick={addScenario} style={{background:"#1a6b3c",color:"white",border:"none",padding:"4px 12px",borderRadius:3,cursor:"pointer",fontSize:9,letterSpacing:"0.1em",textTransform:"uppercase",fontFamily:"Inter, sans-serif",fontWeight:700}}>+ Add</button>
         </div>
 
         {/* Content */}
@@ -790,7 +790,7 @@ export default function App() {
             <CapitalStackPanel scenario={dbScenario} baseFA={baseFA} budgetWithCalc={budgetBasis?.budget || null} />
           )}
           {tab==="sources" && (
-            <SourcesUsesPanel sources={dbSources || []} budgetWithCalc={budgetBasis?.budget || null} baseFA={baseFA} />
+            <SourcesUsesPanel />
           )}
 
           {baseFA && tab==="scenarios" && (

@@ -64,7 +64,7 @@ function Field({ label, value, onChange, type="number", format, suffix, note, ac
             border: `1px solid ${focused ? (accent||"#1a3a6b") : "#e0e0e0"}`,
             borderRadius: 3,
             fontSize: 12,
-            fontFamily: "'DM Mono', monospace",
+            fontFamily: "Inter, sans-serif",
             color: readOnly ? "#888" : "#111",
             background: readOnly ? "#f8f8f8" : "white",
             outline: "none",
@@ -90,7 +90,7 @@ function ResultRow({ label, value, sub, bold, ok, warn, borderTop }) {
       <span style={{ fontSize:10, color:"#888", textTransform:"uppercase", letterSpacing:"0.04em" }}>{label}</span>
       <div style={{ textAlign:"right" }}>
         <div style={{ fontSize: bold ? 14 : 12, fontWeight: bold ? 700 : 500, color,
-          fontFamily:"'DM Mono',monospace" }}>{value}</div>
+          fontFamily:"Inter, sans-serif" }}>{value}</div>
         {sub && <div style={{ fontSize:9, color:"#bbb" }}>{sub}</div>}
       </div>
     </div>
@@ -111,7 +111,7 @@ function SensitivityGrid({ noi, baseRate, baseAmort, baseDSCR }) {
         NOI {fmt$(noi)} · {baseAmort}-yr amort · DSCR target (rows) × Interest Rate (cols)
       </div>
       <div style={{ overflowX:"auto" }}>
-        <table style={{ borderCollapse:"collapse", fontSize:10, fontFamily:"'DM Mono',monospace", width:"100%" }}>
+        <table style={{ borderCollapse:"collapse", fontSize:10, fontFamily:"Inter, sans-serif", width:"100%" }}>
           <thead>
             <tr style={{ borderBottom:"2px solid #111" }}>
               <th style={{ padding:"5px 10px", textAlign:"left", fontSize:8, color:"#888", textTransform:"uppercase", width:80 }}>DSCR ↓ / Rate →</th>
@@ -168,7 +168,7 @@ function AmortSchedule({ principal, rate, amortYears, noi }) {
       <div style={{ fontSize:9, fontWeight:700, letterSpacing:"0.1em", textTransform:"uppercase", color:"#888", marginBottom:12 }}>
         Loan Balance & Coverage Over Time
       </div>
-      <table style={{ width:"100%", borderCollapse:"collapse", fontSize:10, fontFamily:"'DM Mono',monospace" }}>
+      <table style={{ width:"100%", borderCollapse:"collapse", fontSize:10, fontFamily:"Inter, sans-serif" }}>
         <thead>
           <tr style={{ borderBottom:"2px solid #111" }}>
             {["Year","Balance","Principal Paid","Int. Paid (Ann.)","DSCR"].map(h => (
@@ -255,17 +255,17 @@ export default function DebtSizingPanel({ baseFA, onLoanUpdate }) {
         </div>
         <div style={{ display:"flex", gap:6 }}>
           <button onClick={() => setShowGrid(v=>!v)}
-            style={{ background:"white", border:"1px solid #e0e0e0", color:"#666", padding:"5px 11px", borderRadius:3, cursor:"pointer", fontSize:9, letterSpacing:"0.08em", textTransform:"uppercase", fontFamily:"'DM Mono',monospace" }}>
+            style={{ background:"white", border:"1px solid #e0e0e0", color:"#666", padding:"5px 11px", borderRadius:3, cursor:"pointer", fontSize:9, letterSpacing:"0.08em", textTransform:"uppercase", fontFamily:"Inter, sans-serif" }}>
             {showGrid ? "Hide Grid" : "Sensitivity"}
           </button>
           <button onClick={() => setShowAmort(v=>!v)}
-            style={{ background:"white", border:"1px solid #e0e0e0", color:"#666", padding:"5px 11px", borderRadius:3, cursor:"pointer", fontSize:9, letterSpacing:"0.08em", textTransform:"uppercase", fontFamily:"'DM Mono',monospace" }}>
+            style={{ background:"white", border:"1px solid #e0e0e0", color:"#666", padding:"5px 11px", borderRadius:3, cursor:"pointer", fontSize:9, letterSpacing:"0.08em", textTransform:"uppercase", fontFamily:"Inter, sans-serif" }}>
             {showAmort ? "Hide Schedule" : "Amort Schedule"}
           </button>
           {onLoanUpdate && (
             <button
               onClick={() => { onLoanUpdate(results.loanAmount, rate, amort, results.ads); }}
-              style={{ background:"#1a3a6b", color:"white", border:"none", padding:"5px 14px", borderRadius:3, cursor:"pointer", fontSize:9, letterSpacing:"0.08em", textTransform:"uppercase", fontFamily:"'DM Mono',monospace", fontWeight:700 }}>
+              style={{ background:"#1a3a6b", color:"white", border:"none", padding:"5px 14px", borderRadius:3, cursor:"pointer", fontSize:9, letterSpacing:"0.08em", textTransform:"uppercase", fontFamily:"Inter, sans-serif", fontWeight:700 }}>
               Push to Proforma →
             </button>
           )}
@@ -292,7 +292,7 @@ export default function DebtSizingPanel({ baseFA, onLoanUpdate }) {
                     color: mode===m.key?"#1a3a6b":"#888",
                     fontWeight: mode===m.key?700:400,
                     fontSize:9, letterSpacing:"0.06em", textTransform:"uppercase",
-                    fontFamily:"'DM Mono',monospace", cursor:"pointer" }}>
+                    fontFamily:"Inter, sans-serif", cursor:"pointer" }}>
                   {m.label}
                 </button>
               ))}
@@ -458,7 +458,7 @@ export default function DebtSizingPanel({ baseFA, onLoanUpdate }) {
           </div>
           <button
             onClick={() => onLoanUpdate(results.loanAmount, rate, amort, results.ads)}
-            style={{ background:"#1a3a6b", color:"white", border:"none", padding:"9px 18px", borderRadius:4, cursor:"pointer", fontSize:10, letterSpacing:"0.08em", textTransform:"uppercase", fontFamily:"'DM Mono',monospace", fontWeight:700, flexShrink:0 }}>
+            style={{ background:"#1a3a6b", color:"white", border:"none", padding:"9px 18px", borderRadius:4, cursor:"pointer", fontSize:10, letterSpacing:"0.08em", textTransform:"uppercase", fontFamily:"Inter, sans-serif", fontWeight:700, flexShrink:0 }}>
             Push to Proforma →
           </button>
         </div>
