@@ -96,13 +96,6 @@ export default function SourcesUsesPanel() {
   const rawSubdebt   = moduleStates.debt?.subdebt ?? DEFAULT_SUBDEBT;
   const otherSources = moduleStates.debt?.other_sources ?? DEFAULT_OTHER_SOURCES;
 
-  // Sync DDF into subdebt
-  const subdebt = rawSubdebt.map(l =>
-    l.loan_type === "deferred_fee"
-      ? { ...l, amount: bc.deferredDevFee || l.amount }
-      : l
-  );
-
   // ── USES ──
   const uses = [
     { label: "Land & Acquisition", amount: bc.acqTotal },
@@ -118,6 +111,7 @@ export default function SourcesUsesPanel() {
   const permLoan = permanent.loan_amount || 0;
   const fedEquity = lihtc.equityRaised || 0;
   const stateEquity = lihtc.stateEquity || 0;
+  const deferredDevFee = bc.deferredDevFee || 0;  // always from budget — single source of truth
 
   // Build individual source lines — show subdebt items individually (not grouped)
   const sourceLines = [];
@@ -130,10 +124,14 @@ export default function SourcesUsesPanel() {
   if (stateEquity > 0)
     sourceLines.push({ label: "State Credit Equity", amount: stateEquity, color: "#2a8a50" });
 
-  // Each subdebt item individually (show all named items, even if $0)
-  subdebt.forEach(l => {
-    sourceLines.push({ label: l.label, amount: l.amount || 0, color: l.loan_type === "deferred_fee" ? "#5a3a00" : "#8B2500" });
+  // Subdebt items — skip DDF (shown separately from budget calc)
+  rawSubdebt.forEach(l => {
+    if (l.loan_type === "deferred_fee") return;  // DDF handled below
+    sourceLines.push({ label: l.label, amount: l.amount || 0, color: "#8B2500" });
   });
+
+  // DDF — always from budget, never from saved subdebt amount
+  sourceLines.push({ label: "Def Dev Fee", amount: deferredDevFee, color: "#5a3a00" });
 
   // Other sources / grants (only show if non-zero)
   otherSources.forEach(s => {
