@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useLihtc } from "./context/LihtcContext.jsx";
+import { computeBudgetCalcs, computeLIHTC } from "./lihtcCalcs.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // MODULE 3 — LIHTC CALCULATION ENGINE
@@ -40,83 +41,7 @@ const DEFAULT_LIHTC = {
   state_credit_price:     0,
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
-// CALCULATION ENGINE
-// ─────────────────────────────────────────────────────────────────────────────
-function computeLIHTC(inputs, budgetCalcs, totalUnits) {
-  const i = inputs;
-
-  // Pull TDC and land from budget module
-  const tdc          = budgetCalcs?.tdc            ?? 67824621;
-  const landCost     = budgetCalcs?.acqTotal        ?? 4488000;
-  const budgetBasis  = budgetCalcs?.eligibleBasis   ?? 56809210; // pre-boost
-
-  // STEP 1 — Eligible Basis
-  // If budget module has computed eligibleBasis from in_basis flags, use it directly.
-  // Otherwise fall back to: TDC - land - non_basis_costs deductions (manual inputs).
-  // Additional adjustments (commercial costs, grants, historic reduction) always apply.
-  const _baseBasis = budgetCalcs?.eligibleBasis != null
-    ? budgetCalcs.eligibleBasis  // live from Dev Budget in_basis flags — exact
-    : (tdc - landCost - (i.non_basis_costs || 0)); // manual fallback
-  const adjustedEligibleBasis = _baseBasis
-    - (i.commercial_costs   || 0)
-    - (i.federal_grants     || 0)
-    - (i.historic_reduction || 0);
-
-  // STEP 2 — Basis Boost
-  const boostAmount   = i.basis_boost
-    ? adjustedEligibleBasis * (i.boost_factor - 1)
-    : 0;
-  const boostedBasis  = adjustedEligibleBasis + boostAmount;
-
-  // STEP 3 — Qualified Basis
-  const qualifiedBasis = boostedBasis * (i.applicable_fraction || 1);
-
-  // STEP 4 — Annual Credit
-  // For 4% deals: minimum floor is 4.00% (post-2021)
-  // For 9% deals: fixed at 9.00%
-  const effectiveRate = i.credit_type === "9pct"
-    ? 0.09
-    : Math.max(0.04, i.applicable_pct || 0.04); // 4% floor per CAA 2021
-
-  const annualCredit = qualifiedBasis * effectiveRate;
-
-  // STEP 5 — 10-Year Credit
-  const totalCredit = annualCredit * (i.credit_period || 10);
-
-  // STEP 6 — Equity Raised
-  const equityRaised = totalCredit * (i.investor_price || 0);
-
-  // Bond test
-  // Aggregate basis = TDC - land (NOT eligible basis — different calculation)
-  // Use budget-derived aggregate basis if available, else fall back to TDC - land
-  const aggregateBasis = budgetCalcs?.aggregateBasis || (tdc - landCost);
-  const bondPct        = aggregateBasis > 0 ? i.te_bond_amount / aggregateBasis : 0;
-  const testThreshold  = (i.placed_in_service_year || 2028) > 2025 ? 0.25 : 0.50;
-  const bondTestPass   = bondPct >= testThreshold;
-
-  // Per unit
-  const creditPerUnit = totalUnits > 0 ? annualCredit / totalUnits : 0;
-  const equityPerUnit = totalUnits > 0 ? equityRaised / totalUnits : 0;
-
-  // State credits
-  const stateCreditTotal = i.state_credit_applies
-    ? (i.state_credit_annual || 0) * (i.state_credit_period || 10)
-    : 0;
-  const stateEquity = stateCreditTotal * (i.state_credit_price || 0);
-
-  return {
-    tdc, landCost,
-    adjustedEligibleBasis, boostAmount, boostedBasis,
-    qualifiedBasis,
-    effectiveRate, annualCredit,
-    totalCredit, equityRaised,
-    aggregateBasis, bondPct, testThreshold, bondTestPass,
-    creditPerUnit, equityPerUnit,
-    stateCreditTotal, stateEquity,
-    totalEquity: equityRaised + stateEquity,
-  };
-}
+// Calculation engine moved to src/lihtcCalcs.js (shared with Debt module)
 
 // ─────────────────────────────────────────────────────────────────────────────
 // COMPONENTS
@@ -276,101 +201,14 @@ export default function TaxCreditPanel() {
 
   const totalUnits = (unitMix?.rows ?? []).reduce((s, r) => s + (r.count || 0), 0) || 175;
 
-  // Build budget calcs summary for this module to read
-  // We need tdc, acqTotal from budget module
-  const budgetCalcs = budget ? {
-    tdc:           null, // computed below
-    acqTotal:      null,
-    eligibleBasis: null,
-  } : null;
+  // Budget calcs from shared utility — single source of truth for TDC, basis, etc.
+  const budgetCalcs = computeBudgetCalcs(budget, totalUnits);
 
-  // Compute budget numbers from moduleStates.budget
-  // Uses same logic as DevBudget computeBudget to ensure consistent TDC
-  let tdc = 67824621, acqTotal = 4488000, tcAggrBasis = null, tcEligibleBasis = null;
-  if (budget?.sections && budget?.assumptions) {
-    const a = budget.assumptions;
-    const s = budget.sections;
+  // TE bond amount from Debt module (Fix #2 — replaces manual te_bond_amount input)
+  const debtConstruction = moduleStates.debt?.construction ?? {};
+  const teLoanFromDebt = budgetCalcs.tdc * (debtConstruction.bond_test_target_pct || 0.35);
 
-    // Acquisition
-    acqTotal = s.acquisition?.reduce((sum, l) => sum + (l.amount || 0), 0) || 4488000;
-
-    // Hard costs — P&P Bond excluded from cont/tax base; sales tax applies AFTER contingency
-    const hcAllInputs = s.hard_costs?.filter(l => l.type === "input").reduce((sum, l) => sum + (l.amount || 0), 0) || 0;
-    const ppBond    = s.hard_costs?.find(l => l.label?.toLowerCase().includes("p&p") || l.label?.toLowerCase().includes("bond premium"));
-    const ppBondAmt = ppBond?.type === "input" ? (ppBond?.amount || 0) : 0;
-    const hcContBase = hcAllInputs - ppBondAmt;
-    const hcCont   = hcContBase * (a.hc_contingency_pct || 0);
-    const hcTax    = (hcContBase + hcCont) * (a.sales_tax_pct || 0);
-    const hcTotal  = hcAllInputs + hcCont + hcTax;
-
-    // Soft costs — contingency applies to input subtotal
-    const scInputs = s.soft_costs?.filter(l => l.type === "input").reduce((sum, l) => sum + (l.amount || 0), 0) || 0;
-    const scTotal  = scInputs + (scInputs * (a.sc_contingency_pct || 0));
-
-    // Financing — inputs plus calculated lines
-    const finInputs  = s.financing?.filter(l => l.type === "input").reduce((sum, l) => sum + (l.amount || 0), 0) || 0;
-    const combinedCL = (a.const_loan_amount || 0) + (a.taxable_loan_amount || 0);
-    const constOrig  = combinedCL * (a.const_origination_pct || 0);
-    const permOrig   = (a.perm_loan_amount  || 0) * (a.perm_origination_pct  || 0);
-    const constInt   = a.const_interest_est  || 0;
-    const leaseupInt = a.leaseup_interest_est || 0;
-    const finTotal   = finInputs + constOrig + permOrig + constInt + leaseupInt;
-
-    // Org / reserves
-    const orgInputs = s.org_reserves?.filter(l => l.type === "input").reduce((sum, l) => sum + (l.amount || 0), 0) || 0;
-    const repRes    = totalUnits * (a.rep_reserve_per_unit ?? 350);
-    const opRes     = a.op_reserve_fallback  ?? 637500;
-    const adsRes    = a.ads_reserve_fallback ?? 1110159;
-    const orgTotal  = orgInputs + repRes + opRes + adsRes;
-
-    // Dev fee is % of costs (not TDC) — matches DevBudget
-    const subtotal = acqTotal + hcTotal + scTotal + finTotal + orgTotal;
-    const devFee   = subtotal * (a.dev_fee_pct || 0.15);
-    tdc = subtotal + devFee;
-    // Eligible basis — sum of in_basis lines + dev fee
-    const _calcRefs = {
-      salesTax: hcTax, contingency: hcCont, scContingency: (scInputs*(a.sc_contingency_pct||0)),
-      constOrigination: ((a.const_loan_amount||0)+(a.taxable_loan_amount||0))*(a.const_origination_pct||0),
-      permOrigination: 0, // perm orig not in basis
-      constInterest: a.const_interest_est||0,
-      leaseupInterest: 0, // lease-up not in basis
-      opRes: 0, repRes: 0, adsRes: 0, // reserves not in basis
-    };
-    tcEligibleBasis = devFee + Object.values(s).flat().reduce((sum, l) => {
-      if (!l.in_basis) return sum;
-      let amt = l.amount || 0;
-      if (l.type==='pct_hc') amt = l.label?.toLowerCase().includes('tax') ? _calcRefs.salesTax : _calcRefs.contingency;
-      else if (l.type==='pct_sc') amt = _calcRefs.scContingency;
-      else if (l.type==='pct_loan_const') amt = _calcRefs.constOrigination;
-      else if (l.type==='pct_loan_perm') amt = 0;
-      else if (l.type==='est_2b') amt = l.label?.toLowerCase().includes('lease') ? 0 : _calcRefs.constInterest;
-      else if (['calc_opres','calc_repres','calc_adsres'].includes(l.type)) amt = 0;
-      return sum + (isNaN(amt)?0:amt);
-    }, 0);
-
-    // Aggregate basis from bond_basis flags
-    const _cOrig  = ((a.const_loan_amount||0)+(a.taxable_loan_amount||0))*(a.const_origination_pct||0);
-    const _cInt   = a.const_interest_est||0;
-    tcAggrBasis = Object.values(s).flat().reduce((sum, l) => {
-      if (!l.bond_basis) return sum;
-      let amt = l.amount || 0;
-      if (l.type === 'pct_loan_const') amt = _cOrig;
-      else if (l.type === 'pct_loan_perm') amt = 0;
-      else if (l.type === 'est_2b') amt = l.label?.toLowerCase().includes('lease') ? 0 : _cInt;
-      else if (l.type === 'pct_hc') {
-        const _hcAll = s.hard_costs?.filter(x=>x.type==="input").reduce((a,x)=>a+(x.amount||0),0)||0;
-        const _ppAmt = s.hard_costs?.find(x=>x.label?.toLowerCase().includes("p&p")||x.label?.toLowerCase().includes("bond premium"));
-        const _ppA = _ppAmt?.type==="input"?(_ppAmt?.amount||0):0;
-        const _base = _hcAll-_ppA;
-        const _cont = _base*(a.hc_contingency_pct||0);
-        amt = l.label?.toLowerCase().includes('tax') ? (_base+_cont)*(a.sales_tax_pct||0) : _cont;
-      }
-      else if (l.type === 'pct_sc') amt = (s.soft_costs?.filter(x=>x.type==="input").reduce((a,x)=>a+(x.amount||0),0)||0)*(a.sc_contingency_pct||0);
-      return sum + (isNaN(amt)?0:amt);
-    }, devFee); // dev fee 100% in bond basis
-  }
-
-  const calcs = computeLIHTC(inputs, { tdc, acqTotal, aggregateBasis: tcAggrBasis, eligibleBasis: tcEligibleBasis }, totalUnits);
+  const calcs = computeLIHTC(inputs, budgetCalcs, totalUnits, teLoanFromDebt);
   const update = (patch) => updateModule("lihtc", patch);
 
   const inpStyle = { background:"#f8f8f8", border:"1px solid #e0e0e0", borderRadius:4,
@@ -473,16 +311,17 @@ export default function TaxCreditPanel() {
             </InputField>
 
             <InputField label="TE Bond Amount"
-              note="Derived from Debt module: TDC × Bond Test Target %. Override here if needed.">
-              <NumberInput value={inputs.te_bond_amount} step={100000}
-                onChange={v => update({ te_bond_amount: v })} prefix="$" />
+              note={`Auto from Debt module: TDC × ${((debtConstruction.bond_test_target_pct || 0.35) * 100).toFixed(0)}% bond test target`}>
+              <div style={{ fontSize:13, fontWeight:700, color:"#1a3a6b", padding:"4px 0" }}>
+                {fmt$(calcs.teBondAmount)}
+              </div>
             </InputField>
 
             <div style={{ borderTop:"1px solid #f0f0f0", paddingTop:10, marginTop:4 }}>
               <div style={{ fontSize:8, fontWeight:700, color:"#888", textTransform:"uppercase",
                 letterSpacing:"0.08em", marginBottom:8 }}>Non-Basis Deductions</div>
               <div style={{ fontSize:8, color:"#aaa", marginBottom:8 }}>
-                {tcEligibleBasis != null
+                {budgetCalcs.eligibleBasis != null
                   ? "✓ Eligible basis reading live from Dev Budget in_basis flags — these fields are fallback only."
                   : "These reduce TDC to Eligible Basis. Set up Dev Budget to auto-calculate."}
               </div>
@@ -677,7 +516,7 @@ export default function TaxCreditPanel() {
                   : " — Pre-2026 Rule"}
               </div>
               {[
-                { label:"TE Bond Amount",       value: fmt$(inputs.te_bond_amount) },
+                { label:"TE Bond Amount",       value: fmt$(calcs.teBondAmount) },
                 { label:"Aggregate Basis (TDC − Land)", value: fmt$(calcs.aggregateBasis) },
                 { label:"Bond % of Aggregate Basis",    value: fmtPct(calcs.bondPct) },
                 { label:`Required Threshold`,           value: fmtPct(calcs.testThreshold) },
@@ -701,7 +540,7 @@ export default function TaxCreditPanel() {
                 </span>
               </div>
               <div style={{ fontSize:8, color:"#aaa", marginTop:6 }}>
-                {tcAggrBasis
+                {budgetCalcs.aggregateBasis != null
                   ? "Aggregate basis computed from Dev Budget bond_basis flags — land + depreciable costs + dev fee, excl. perm fees, bond issuance costs, reserves."
                   : "Aggregate basis estimated as TDC − land. Set bond_basis flags in Dev Budget for exact calculation."}
                 {" "}Recycled bonds do not count toward the test threshold.
