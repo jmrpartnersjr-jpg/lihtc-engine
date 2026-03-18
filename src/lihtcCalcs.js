@@ -101,7 +101,16 @@ export function computeBudgetCalcs(budget, totalUnits = 175) {
     return sum + (isNaN(amt) ? 0 : amt);
   }, 0);
 
-  return { tdc, acqTotal, eligibleBasis, aggregateBasis, deferredDevFee, devFee, subtotal };
+  // Section totals for Construction CF alignment
+  const finLessInterest = finInputs + constOrig + permOrig; // financing without interest
+  const cashDevFee = devFee * (a.cash_fee_pct || 0.33);
+
+  return {
+    tdc, acqTotal, eligibleBasis, aggregateBasis, deferredDevFee, devFee, subtotal,
+    // Section totals (so Const CF matches TDC exactly)
+    hcTotal, scTotal, finTotal, finLessInterest, orgTotal, cashDevFee,
+    constInt, leaseupInt,
+  };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

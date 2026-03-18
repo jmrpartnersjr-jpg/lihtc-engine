@@ -209,6 +209,11 @@ export default function TaxCreditPanel() {
   const teLoanFromDebt = budgetCalcs.tdc * (debtConstruction.bond_test_target_pct || 0.35);
 
   const calcs = computeLIHTC(inputs, budgetCalcs, totalUnits, teLoanFromDebt);
+  // Non-basis amount: derived from budget when flags are set, else use manual input
+  const nonBasisFromBudget = budgetCalcs.eligibleBasis != null
+    ? (budgetCalcs.tdc - budgetCalcs.acqTotal - budgetCalcs.eligibleBasis)
+    : null;
+  const nonBasisDisplay = nonBasisFromBudget ?? (inputs.non_basis_costs || 0);
   const update = (patch) => updateModule("lihtc", patch);
 
   const inpStyle = { background:"#f8f8f8", border:"1px solid #e0e0e0", borderRadius:4,
@@ -388,11 +393,14 @@ export default function TaxCreditPanel() {
 
           {/* STEP 1 — Eligible Basis */}
           <StepCard step={1} title="Eligible Basis" accent="navy"
-            policy="Total Development Cost minus land, non-basis costs, commercial space, federal grants, and historic credit reductions."
+            policy={nonBasisFromBudget != null
+              ? "Eligible basis computed from Dev Budget in_basis flags. Non-basis items (parking, perm fees, reserves, etc.) are automatically excluded."
+              : "Total Development Cost minus land, non-basis costs, commercial space, federal grants, and historic credit reductions."}
             rows={[
               { label:"Total Development Cost",        value: fmt$(calcs.tdc) },
               { operator:"−", label:"Land & Acquisition",             value: fmt$(calcs.landCost),            deduction: true },
-              { operator:"−", label:"Non-Basis Costs",                value: fmt$(inputs.non_basis_costs || 0), deduction: true },
+              { operator:"−", label: nonBasisFromBudget != null ? "Non-Basis Items (from Dev Budget)" : "Non-Basis Costs",
+                value: fmt$(nonBasisDisplay), deduction: true },
               { operator:"−", label:"Commercial Costs",               value: fmt$(inputs.commercial_costs || 0), deduction: inputs.commercial_costs > 0 },
               { operator:"−", label:"Federal Grants",                  value: fmt$(inputs.federal_grants || 0),  deduction: inputs.federal_grants > 0 },
               { operator:"−", label:"Historic Credit Reduction",       value: fmt$(inputs.historic_reduction || 0), deduction: inputs.historic_reduction > 0 },

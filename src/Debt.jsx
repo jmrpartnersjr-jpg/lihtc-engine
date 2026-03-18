@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useRef, useMemo } from "react";
 import { useLihtc } from "./context/LihtcContext.jsx";
 import { computeBudgetCalcs, computeLIHTC } from "./lihtcCalcs.js";
 
@@ -14,7 +14,9 @@ const fmtPct = v => v == null ? "—" : (v * 100).toFixed(3) + "%";
 const fmtPct2 = v => v == null ? "—" : (v * 100).toFixed(2) + "%";
 const fmtX   = v => v == null ? "—" : v.toFixed(2) + "x";
 
-let _id = 600; // start above all default IDs (400-403 used in DEFAULT_SUBDEBT)
+// Generate unique IDs for new subdebt entries.
+// Must be higher than any existing ID in the array to avoid collisions.
+let _id = Date.now();  // use timestamp to guarantee uniqueness across sessions
 const mkId = () => ++_id;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -448,6 +450,7 @@ function BalanceTable({ loan }) {
 // Single subdebt card — draggable
 function SubdebtCard({ loan, onUpdate, onRemove, dragHandleProps, isDragging }) {
   const [expanded, setExpanded] = useState(false);
+  const isDDF = loan.loan_type === "deferred_fee";
   const color = LOAN_TYPE_COLORS[loan.loan_type] || "#444";
   const annualCashDS = subdebtAnnualDS(loan);
   const projection = subdebtProjection(loan, loan.term_years || 15);
@@ -483,13 +486,15 @@ function SubdebtCard({ loan, onUpdate, onRemove, dragHandleProps, isDragging }) 
           {loan.priority}
         </div>
 
-        {/* Lender name — editable inline */}
+        {/* Lender name — editable inline (read-only for DDF) */}
         <input
           value={loan.label}
-          onChange={e => { e.stopPropagation(); onUpdate({ label: e.target.value }); }}
+          onChange={e => { e.stopPropagation(); if (!isDDF) onUpdate({ label: e.target.value }); }}
           onClick={e => e.stopPropagation()}
+          readOnly={isDDF}
           style={{ flex:1, background:"transparent", border:"none", outline:"none",
-            fontSize:12, fontWeight:700, fontFamily:"Inter, sans-serif", color:"#111" }}
+            fontSize:12, fontWeight:700, fontFamily:"Inter, sans-serif",
+            color: isDDF ? "#888" : "#111", cursor: isDDF ? "default" : "text" }}
         />
 
         {/* Summary chips */}
@@ -514,11 +519,13 @@ function SubdebtCard({ loan, onUpdate, onRemove, dragHandleProps, isDragging }) 
         </div>
 
         <span style={{ color:"#aaa", fontSize:10, flexShrink:0 }}>{expanded ? "▲" : "▼"}</span>
-        <button onClick={e => { e.stopPropagation(); onRemove(); }}
-          style={{ background:"none", border:"none", cursor:"pointer", color:"#ddd",
-            fontSize:12, padding:"0 4px", flexShrink:0 }}
-          onMouseEnter={e => e.target.style.color="#8B2500"}
-          onMouseLeave={e => e.target.style.color="#ddd"}>✕</button>
+        {!isDDF && (
+          <button onClick={e => { e.stopPropagation(); onRemove(); }}
+            style={{ background:"none", border:"none", cursor:"pointer", color:"#ddd",
+              fontSize:12, padding:"0 4px", flexShrink:0 }}
+            onMouseEnter={e => e.target.style.color="#8B2500"}
+            onMouseLeave={e => e.target.style.color="#ddd"}>✕</button>
+        )}
       </div>
 
       {/* Expanded detail */}
@@ -533,14 +540,22 @@ function SubdebtCard({ loan, onUpdate, onRemove, dragHandleProps, isDragging }) 
               <div style={{ display:"flex", flexDirection:"column", gap:5 }}>
                 <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
                   <span style={{ fontSize:9, color:"#666" }}>Type</span>
-                  <Select value={loan.loan_type} onChange={v => onUpdate({ loan_type: v })}
-                    options={LOAN_TYPE_OPTIONS} width={110} />
+                  {isDDF ? (
+                    <span style={{ fontSize:10, color:"#888", fontStyle:"italic" }}>Deferred Fee</span>
+                  ) : (
+                    <Select value={loan.loan_type} onChange={v => onUpdate({ loan_type: v })}
+                      options={LOAN_TYPE_OPTIONS} width={110} />
+                  )}
                 </div>
                 <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
                   <span style={{ fontSize:9, color:"#666" }}>Amount</span>
-                  <input type="number" value={loan.amount || ""} step={10000}
-                    onChange={e => onUpdate({ amount: Number(e.target.value) })}
-                    style={{ ...inpStyle, width:110 }} />
+                  {isDDF ? (
+                    <span style={{ fontSize:10, color:"#888", fontStyle:"italic" }}>{fmt$(loan.amount)} (auto)</span>
+                  ) : (
+                    <input type="number" value={loan.amount || ""} step={10000}
+                      onChange={e => onUpdate({ amount: Number(e.target.value) })}
+                      style={{ ...inpStyle, width:110 }} />
+                  )}
                 </div>
                 <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
                   <span style={{ fontSize:9, color:"#666" }}>Rate</span>
@@ -807,7 +822,16 @@ export default function DebtPanel() {
 
   const construction  = { ...DEFAULT_CONSTRUCTION,  ...moduleStates.debt?.construction  };
   const permanent     = { ...DEFAULT_PERMANENT,      ...moduleStates.debt?.permanent     };
-  const rawSubdebt    = moduleStates.debt?.subdebt       ?? DEFAULT_SUBDEBT;
+  // Ensure every subdebt entry has a unique id (saved entries from Supabase may lack ids).
+  // Deduplicate by label as a safety measure against accidental duplicates.
+  const rawSubdebt = useMemo(() => {
+    let list = moduleStates.debt?.subdebt ?? DEFAULT_SUBDEBT;
+    // Assign IDs to any entries missing them
+    const maxExisting = list.reduce((mx, l) => Math.max(mx, l.id || 0), 0);
+    let nextId = Math.max(maxExisting + 1, 300);
+    list = list.map(l => l.id != null ? l : { ...l, id: nextId++ });
+    return list;
+  }, [moduleStates.debt?.subdebt]);
   const otherSources  = moduleStates.debt?.other_sources ?? DEFAULT_OTHER_SOURCES;
 
   // TDC from budget module
