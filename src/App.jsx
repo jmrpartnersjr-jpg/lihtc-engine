@@ -8,6 +8,9 @@ import CapitalStackPanel from "./CapitalStack.jsx";
 import ConstructionCFPanel from "./ConstructionCF.jsx";
 import SourcesUsesPanel from "./SourcesUses.jsx";
 import ProformaPanel from "./Proforma.jsx";
+import SchedulePanel from "./Schedule.jsx";
+import LeaseUpPanel from "./LeaseUp.jsx";
+import GapSolverPanel from "./GapSolver.jsx";
 
 // ─── CHANGE 1 of 4: Import context hooks and new components ──────────────────
 import { useLihtc } from "./context/LihtcContext.jsx";
@@ -677,6 +680,9 @@ export default function App() {
     {key:"stack",     label:"Capital Stack"},
     {key:"sources",   label:"Sources & Uses"},
     {key:"proforma",  label:"Proforma"},
+    {key:"schedule",  label:"Schedule"},
+    {key:"leaseup",   label:"Lease-Up"},
+    {key:"gapsolver", label:"Gap Solver"},
     {key:"scenarios", label:`Edit (${scenarios.length})`},
     {key:"table",     label:"Table"},
     {key:"charts",    label:"Charts"},
@@ -796,6 +802,15 @@ export default function App() {
           )}
           {tab==="proforma" && (
             <ProformaPanel />
+          )}
+          {tab==="schedule" && (
+            <SchedulePanel />
+          )}
+          {tab==="leaseup" && (
+            <LeaseUpPanel />
+          )}
+          {tab==="gapsolver" && (
+            <GapSolverPanel />
           )}
 
           {baseFA && tab==="scenarios" && (
