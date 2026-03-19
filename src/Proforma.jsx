@@ -241,10 +241,18 @@ export default function ProformaPanel() {
   // ── Pull inputs ──
   const saved = moduleStates.proforma || {};
   const pf = { ...DEFAULT_PROFORMA, ...saved };
-  const opexLines = pf.opex_lines || DEFAULT_OPEX_LINES;
-  const customOpex = pf.custom_opex || [];
-  const otherIncomeLines = pf.other_income || DEFAULT_OTHER_INCOME;
-  const customOtherIncome = pf.custom_other_income || [];
+  const opexLines = (pf.opex_lines || DEFAULT_OPEX_LINES).map((l, i) =>
+    l.id ? l : { ...l, id: `opex_${i}_${l.label?.replace(/\s/g, '_') || i}` }
+  );
+  const customOpex = (pf.custom_opex || []).map((l, i) =>
+    l.id ? l : { ...l, id: `custom_opex_${i}` }
+  );
+  const otherIncomeLines = (pf.other_income || DEFAULT_OTHER_INCOME).map((l, i) =>
+    l.id ? l : { ...l, id: `oi_${i}_${l.label?.replace(/\s/g, '_') || i}` }
+  );
+  const customOtherIncome = (pf.custom_other_income || []).map((l, i) =>
+    l.id ? l : { ...l, id: `custom_oi_${i}` }
+  );
   const subLoanRules = pf.sub_loan_rules || [];
 
   const update = patch => updateModule("proforma", { ...pf, ...patch });
