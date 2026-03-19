@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useMemo } from "react";
+import { useState, useCallback, useRef, useMemo, useEffect } from "react";
 import { useLihtc } from "./context/LihtcContext.jsx";
 import { computeBudgetCalcs, computeLIHTC } from "./lihtcCalcs.js";
 
@@ -53,9 +53,11 @@ const DEFAULT_PERMANENT = {
   io_years:          0,
   mip_annual:        0,
   dscr_requirement:  1.15,
-  // NOI — temp until proforma module wired
+  // NOI — auto-wired from Proforma module
   noi_override:      2553365,
   use_noi_override:  true,
+  // Auto-size loan from DSCR — default ON
+  auto_size_dscr:    true,
 };
 
 const DEFAULT_SUBDEBT = [
@@ -867,6 +869,19 @@ export default function DebtPanel() {
 
   const calcs = computeDebt(construction, permanent, subdebt, null, null, tdc);
 
+  // Auto-size loan from DSCR when enabled
+  const prevMaxLoan = useRef(0);
+  useEffect(() => {
+    if (permanent.auto_size_dscr && calcs.maxLoanDSCR > 0) {
+      const maxRounded = Math.floor(calcs.maxLoanDSCR);
+      if (Math.abs(maxRounded - (permanent.loan_amount || 0)) > 100 &&
+          Math.abs(maxRounded - prevMaxLoan.current) > 100) {
+        prevMaxLoan.current = maxRounded;
+        updateModule("debt", { permanent: { ...permanent, loan_amount: maxRounded } });
+      }
+    }
+  }, [calcs.maxLoanDSCR, permanent.auto_size_dscr]);
+
   // Writers
   const updateConstruction = p => updateModule("debt", { construction: { ...construction, ...p } });
   const updatePermanent    = p => updateModule("debt", { permanent:    { ...permanent,    ...p } });
@@ -1097,25 +1112,23 @@ export default function DebtPanel() {
                 onChange={v => updatePermanent({ io_years: v })} width={60} />
             </FieldRow>
 
-            {/* NOI input — temp until proforma wired */}
+            {/* NOI — auto-wired from Proforma */}
             <div style={{ background:"#f0f3f9", border:"1px solid #b8c8e0", borderRadius:5,
               padding:"10px 12px", marginTop:10, marginBottom:10 }}>
-              <div style={{ fontSize:8, fontWeight:700, color:"#1a3a6b", textTransform:"uppercase",
-                letterSpacing:"0.07em", marginBottom:6 }}>
-                NOI Input — Temp until Proforma module wired
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:6 }}>
+                <span style={{ fontSize:8, fontWeight:700, color:"#1a3a6b", textTransform:"uppercase",
+                  letterSpacing:"0.07em" }}>
+                  Year 1 NOI {permanent.use_noi_override ? "(from Proforma)" : ""}
+                </span>
               </div>
-              <FieldRow label="Use NOI override?">
-                <div style={{ display:"flex", alignItems:"center", gap:6 }}>
-                  <input type="checkbox" checked={permanent.use_noi_override}
-                    onChange={e => updatePermanent({ use_noi_override: e.target.checked })}
-                    style={{ cursor:"pointer", accentColor:"#1a3a6b" }} />
-                </div>
-              </FieldRow>
               <FieldRow label="NOI (Untrended)">
                 <NumInput value={permanent.noi_override} step={10000}
                   onChange={v => updatePermanent({ noi_override: v })}
-                  disabled={!permanent.use_noi_override} prefix="$" />
+                  prefix="$" />
               </FieldRow>
+              <div style={{ fontSize:8, color:"#999", marginTop:2 }}>
+                Auto-updated when you visit the Proforma tab. Override here if needed.
+              </div>
             </div>
 
             {/* DSCR Sizing Waterfall */}
@@ -1133,22 +1146,53 @@ export default function DebtPanel() {
               </div>
             </div>
 
-            {/* Actual loan amount */}
+            {/* Loan Amount — Auto-size toggle */}
             <div style={{ marginTop:10 }}>
-              <FieldRow label="Loan Amount" note="Override DSCR max if lender comes in different">
-                <div style={{ display:"flex", alignItems:"center", gap:6 }}>
-                  <NumInput value={permanent.loan_amount} step={100000}
-                    onChange={v => updatePermanent({ loan_amount: v })} prefix="$" />
-                  <button
-                    onClick={() => updatePermanent({ loan_amount: Math.floor(calcs.maxLoanDSCR) })}
-                    title={`Set to DSCR-max: ${fmt$(Math.floor(calcs.maxLoanDSCR))}`}
-                    style={{ background:"#1a3a6b", color:"white", border:"none", borderRadius:3,
-                      padding:"4px 8px", fontSize:8, fontFamily:"Inter, sans-serif", cursor:"pointer",
-                      fontWeight:700, letterSpacing:"0.05em", whiteSpace:"nowrap" }}>
-                    USE MAX
-                  </button>
+              <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:8 }}>
+                <label style={{ display:"flex", alignItems:"center", gap:6, cursor:"pointer" }}>
+                  <input type="checkbox" checked={permanent.auto_size_dscr !== false}
+                    onChange={e => {
+                      const autoSize = e.target.checked;
+                      const patch = { auto_size_dscr: autoSize };
+                      if (autoSize) patch.loan_amount = Math.floor(calcs.maxLoanDSCR);
+                      updatePermanent(patch);
+                    }}
+                    style={{ cursor:"pointer", accentColor:"#1a3a6b" }} />
+                  <span style={{ fontSize:10, fontWeight:600, color:"#1a3a6b" }}>
+                    Auto-size to DSCR max
+                  </span>
+                </label>
+              </div>
+
+              {permanent.auto_size_dscr !== false ? (
+                /* Auto-sized — read-only display */
+                <div style={{ background:"#f0f9f4", border:"1px solid #b8dfc8", borderRadius:5, padding:"10px 12px" }}>
+                  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                    <span style={{ fontSize:10, color:"#666" }}>Loan Amount (DSCR-sized)</span>
+                    <span style={{ fontSize:14, fontWeight:700, color:"#1a6b3c" }}>{fmt$(permanent.loan_amount)}</span>
+                  </div>
+                  <div style={{ fontSize:8, color:"#999", marginTop:4 }}>
+                    Automatically set to max loan at {fmtX(permanent.dscr_requirement || 1.15)} DSCR.
+                    Uncheck "Auto-size" above to manually override.
+                  </div>
                 </div>
-              </FieldRow>
+              ) : (
+                /* Manual — editable */
+                <FieldRow label="Loan Amount" note="Manually set — uncheck auto-size to use DSCR max">
+                  <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+                    <NumInput value={permanent.loan_amount} step={100000}
+                      onChange={v => updatePermanent({ loan_amount: v })} prefix="$" />
+                    <button
+                      onClick={() => updatePermanent({ loan_amount: Math.floor(calcs.maxLoanDSCR) })}
+                      title={`Set to DSCR-max: ${fmt$(Math.floor(calcs.maxLoanDSCR))}`}
+                      style={{ background:"#1a3a6b", color:"white", border:"none", borderRadius:3,
+                        padding:"4px 8px", fontSize:8, fontFamily:"Inter, sans-serif", cursor:"pointer",
+                        fontWeight:700, letterSpacing:"0.05em", whiteSpace:"nowrap" }}>
+                      USE MAX
+                    </button>
+                  </div>
+                </FieldRow>
+              )}
               <FieldRow label="Origination Fee %">
                 <NumInput value={permanent.origination_pct} pct step={0.1}
                   onChange={v => updatePermanent({ origination_pct: v })} />
