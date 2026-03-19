@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { useLihtc } from "./context/LihtcContext.jsx";
 import { supabase } from "./supabase.js";
 
@@ -446,6 +446,15 @@ export default function UnitMixPanel({ onRevenueChange }) {
   const totalAnnualRev = rows.reduce((s, r) => s + calcRow(r).annualRevenue, 0);
   const avgRent        = totalUnits > 0 ? (totalAnnualRev / 12 / totalUnits) : 0;
   const lihtcUnits     = rows.filter(r => r.ami_pct > 0 && r.ami_pct <= 80).reduce((s, r) => s + (r.count || 0), 0);
+
+  // Publish computed revenue to context so Proforma module can read it
+  const prevRevRef = useRef(0);
+  useEffect(() => {
+    if (totalAnnualRev > 0 && Math.abs(totalAnnualRev - prevRevRef.current) > 1) {
+      prevRevRef.current = totalAnnualRev;
+      updateModule("unit_mix", { computed_annual_revenue: Math.round(totalAnnualRev) });
+    }
+  }, [totalAnnualRev]);
 
   // Count guardrail violations for summary badge
   const violations = rows.filter(r => {

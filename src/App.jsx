@@ -7,6 +7,7 @@ import DevBudgetPanel from "./DevBudget.jsx";
 import CapitalStackPanel from "./CapitalStack.jsx";
 import ConstructionCFPanel from "./ConstructionCF.jsx";
 import SourcesUsesPanel from "./SourcesUses.jsx";
+import ProformaPanel from "./Proforma.jsx";
 
 // ─── CHANGE 1 of 4: Import context hooks and new components ──────────────────
 import { useLihtc } from "./context/LihtcContext.jsx";
@@ -675,6 +676,7 @@ export default function App() {
     {key:"taxcredit", label:"Tax Credit"},
     {key:"stack",     label:"Capital Stack"},
     {key:"sources",   label:"Sources & Uses"},
+    {key:"proforma",  label:"Proforma"},
     {key:"scenarios", label:`Edit (${scenarios.length})`},
     {key:"table",     label:"Table"},
     {key:"charts",    label:"Charts"},
@@ -791,6 +793,9 @@ export default function App() {
           )}
           {tab==="sources" && (
             <SourcesUsesPanel />
+          )}
+          {tab==="proforma" && (
+            <ProformaPanel />
           )}
 
           {baseFA && tab==="scenarios" && (
