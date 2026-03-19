@@ -1,49 +1,64 @@
 /**
- * Proforma.jsx — Module 6: 15-Year Operating Proforma
+ * Proforma.jsx — Module 6: 15-Year Operating Proforma (V2)
  *
- * Revenue (from Unit Mix) → OpEx → NOI → Debt Service → Cash Flow
+ * Transposed table layout: Years across top, categories on left.
+ * Matches standard property income statement format.
+ * Revenue (from Unit Mix) → OpEx → NOI → Debt Service → Cash Flow → Waterfall
  * Wires Year 1 NOI back to Debt module for DSCR sizing.
- * Tracks DDF payoff from surplus cash flow.
+ * Tracks DDF payoff + subordinate loan payoff from surplus cash flow.
  */
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { useLihtc } from "./context/LihtcContext.jsx";
-import { computeBudgetCalcs, computeLIHTC } from "./lihtcCalcs.js";
+import { computeBudgetCalcs } from "./lihtcCalcs.js";
 
 /* ── formatters ──────────────────────────────────────────────── */
 const fmt$ = v => v == null ? "—" : "$" + Math.round(Math.abs(v)).toLocaleString();
-const fmtK = v => v == null ? "—" : "$" + (Math.abs(v) / 1000).toFixed(0) + "K";
+const fmtNeg$ = v => {
+  if (v == null) return "—";
+  const abs = Math.round(Math.abs(v));
+  if (abs === 0) return "—";
+  return v < 0 ? `($${abs.toLocaleString()})` : `$${abs.toLocaleString()}`;
+};
 const fmtPct = v => v == null ? "—" : (v * 100).toFixed(1) + "%";
 const fmtX = v => v == null ? "—" : v.toFixed(2) + "x";
 
 /* ── defaults ────────────────────────────────────────────────── */
+const DEFAULT_OPEX_LINES = [
+  { id: "payroll",       label: "Payroll",                       amount: 394000,  escalates: true },
+  { id: "marketing",     label: "Marketing & Advertising",       amount: 43860,   escalates: true },
+  { id: "maintenance",   label: "Repair/Maint. & Cleaning",      amount: 146274,  escalates: true },
+  { id: "admin",         label: "Administrative",                amount: 33080,   escalates: true },
+  { id: "management",    label: "Management Fees",               amount: 0,       escalates: false, is_pct_egi: true, pct: 0.055 },
+  { id: "utilities",     label: "Utilities",                     amount: 337604,  escalates: true },
+  { id: "re_taxes",      label: "Real Estate & Other Taxes",     amount: 7680,    escalates: true },
+  { id: "insurance",     label: "Insurance",                     amount: 74476,   escalates: true },
+];
+
+const DEFAULT_OTHER_INCOME = [
+  { id: "other_inc_1", label: "Other Income", annual: 245700, escalates: true },
+  { id: "op_support",  label: "Operating Support Income", annual: 0, escalates: false },
+];
+
+const DEFAULT_CUSTOM_OPEX = [];
+const DEFAULT_CUSTOM_OTHER_INCOME = [];
+
 const DEFAULT_PROFORMA = {
-  // Escalation rates
-  revenue_escalation:   0.02,   // 2% annual
-  expense_escalation:   0.03,   // 3% annual
-  vacancy_rate:         0.05,   // 5%
-
-  // Other income
-  other_income: [
-    { label: "Laundry / Vending",  annual: 0 },
-    { label: "Parking",            annual: 0 },
-    { label: "Other",              annual: 0 },
-  ],
-
-  // Operating expenses — Year 1 amounts
-  opex: {
-    management_fee_pct: 0.055,   // % of EGI
-    payroll:            394000,
-    admin:              76940,
-    utilities:          337604,
-    maintenance:        146274,
-    insurance:          175000,
-    real_estate_taxes:  125000,
-    other_opex:         0,
-  },
+  revenue_escalation:         0.02,
+  expense_escalation:         0.03,
+  vacancy_rate:               0.06,
   replacement_reserve_per_unit: 350,
-
-  // DDF payoff
-  ddf_payoff_pct: 0.75,         // % of surplus cash flow applied to DDF
+  reserve_escalation:         0.03,
+  ddf_payoff_pct:             1.0,
+  opex_lines:                 DEFAULT_OPEX_LINES,
+  other_income:               DEFAULT_OTHER_INCOME,
+  custom_opex:                DEFAULT_CUSTOM_OPEX,
+  custom_other_income:        DEFAULT_CUSTOM_OTHER_INCOME,
+  // Adjustments
+  lp_partnership_fee:         17500,
+  gp_management_fee:          17500,
+  adjustment_escalation:      0.03,
+  // Sub loan waterfall
+  sub_loan_rules:             [],  // [{ loan_id, label, pct_of_cf }] — filled from debt subdebt
 };
 
 /* ── annual debt service (mirrors Debt.jsx logic) ────────────── */
@@ -61,98 +76,137 @@ function annualDS(amount, rate, amortYears) {
 }
 
 /* ── compute 15-year proforma rows ───────────────────────────── */
-function computeProforma(inputs, grossRent, totalUnits, permLoan, permRate, permAmort, subdebt, deferredDevFee) {
+function computeProforma(inputs, grossRent, totalUnits, permLoan, permRate, permAmort, subdebt, deferredDevFee, subLoanRules) {
   const p = inputs;
   const years = [];
   let ddfBalance = deferredDevFee || 0;
   let ddfPaidYear = null;
 
+  // Track sub loan balances for waterfall payoff
+  const subLoanBalances = {};
+  (subLoanRules || []).forEach(rule => {
+    const loan = (subdebt || []).find(l => l.id === rule.loan_id);
+    subLoanBalances[rule.loan_id] = loan?.amount || 0;
+  });
+
   // Senior debt service (fixed for all years)
   const seniorADS = annualDS(permLoan, permRate, permAmort);
 
-  // Subdebt annual cash-pay (only in_ads items)
-  const subdebtADS = (subdebt || []).reduce((sum, l) => {
-    if (!l.in_ads) return sum;
-    if (l.payment_type === "accrual" || l.payment_type === "forgivable") return sum;
-    if (l.payment_type === "io") return sum + (l.amount || 0) * (l.rate || 0);
-    return sum + annualDS(l.amount || 0, l.rate || 0, l.amortization_years || l.term_years || 15);
-  }, 0);
-
-  const totalADS = seniorADS + subdebtADS;
+  const opexLines = p.opex_lines || DEFAULT_OPEX_LINES;
+  const customOpex = p.custom_opex || [];
+  const otherIncomeLines = p.other_income || DEFAULT_OTHER_INCOME;
+  const customOtherIncome = p.custom_other_income || [];
 
   for (let yr = 1; yr <= 15; yr++) {
     const escalR = Math.pow(1 + (p.revenue_escalation || 0), yr - 1);
     const escalE = Math.pow(1 + (p.expense_escalation || 0), yr - 1);
+    const escalRes = Math.pow(1 + (p.reserve_escalation || 0.03), yr - 1);
+    const escalAdj = Math.pow(1 + (p.adjustment_escalation || 0.03), yr - 1);
 
     // Revenue
-    const gpr = (grossRent || 0) * escalR;
-    const vacancy = gpr * (p.vacancy_rate || 0.05);
-    const otherIncome = (p.other_income || []).reduce((s, o) => s + (o.annual || 0), 0) * escalR;
-    const egi = gpr - vacancy + otherIncome;
+    const residentialRev = (grossRent || 0) * escalR;
+    const commercialRev = 0;
+    const totalRev = residentialRev + commercialRev;
+
+    // Other income
+    const otherIncomeDetail = {};
+    let totalOtherIncome = 0;
+    [...otherIncomeLines, ...customOtherIncome].forEach(item => {
+      const amt = (item.annual || 0) * (item.escalates !== false ? escalR : 1);
+      otherIncomeDetail[item.id] = amt;
+      totalOtherIncome += amt;
+    });
+
+    const adjustedIncome = totalRev + totalOtherIncome;
+    const vacancy = adjustedIncome * (p.vacancy_rate || 0.05);
+    const egi = adjustedIncome - vacancy;
 
     // Operating expenses
-    const opex = p.opex || {};
-    const mgmtFee = egi * (opex.management_fee_pct || 0);
-    const payroll = (opex.payroll || 0) * escalE;
-    const admin = (opex.admin || 0) * escalE;
-    const utilities = (opex.utilities || 0) * escalE;
-    const maintenance = (opex.maintenance || 0) * escalE;
-    const insurance = (opex.insurance || 0) * escalE;
-    const reTaxes = (opex.real_estate_taxes || 0) * escalE;
-    const otherOpex = (opex.other_opex || 0) * escalE;
-    const repReserve = totalUnits * (p.replacement_reserve_per_unit || 350);
-    const totalOpex = mgmtFee + payroll + admin + utilities + maintenance + insurance + reTaxes + otherOpex + repReserve;
+    const opexDetail = {};
+    let totalOpex = 0;
+
+    [...opexLines, ...customOpex].forEach(line => {
+      let amt;
+      if (line.is_pct_egi) {
+        amt = egi * (line.pct || 0);
+      } else {
+        amt = (line.amount || 0) * (line.escalates !== false ? escalE : 1);
+      }
+      opexDetail[line.id] = amt;
+      totalOpex += amt;
+    });
+
+    // Replacement reserves
+    const repReserve = totalUnits * (p.replacement_reserve_per_unit || 350) * escalRes;
+    totalOpex += repReserve;
 
     // NOI
     const noi = egi - totalOpex;
 
-    // Cash flow
-    const cashFlow = noi - totalADS;
+    // Total debt service (senior only for hard pay)
+    const totalADS = seniorADS;
 
     // DSCR
     const seniorDSCR = seniorADS > 0 ? noi / seniorADS : 0;
-    const totalDSCR = totalADS > 0 ? noi / totalADS : 0;
 
-    // DDF payoff
-    const ddfPayment = cashFlow > 0 ? Math.min(cashFlow * (p.ddf_payoff_pct || 0.75), ddfBalance) : 0;
+    // Cash flow
+    const cashFlow = noi - totalADS;
+
+    // ── DDF payoff ──
+    const ddfPayment = cashFlow > 0
+      ? Math.min(cashFlow * (p.ddf_payoff_pct ?? 1.0), ddfBalance)
+      : 0;
     ddfBalance = Math.max(0, ddfBalance - ddfPayment);
     if (ddfBalance <= 0 && ddfPaidYear === null && deferredDevFee > 0) {
       ddfPaidYear = yr;
     }
 
-    const residualCF = cashFlow - ddfPayment;
+    let residualAfterDDF = cashFlow - ddfPayment;
+
+    // ── Sub loan waterfall (after DDF is paid off) ──
+    const subLoanPayments = {};
+    if (ddfBalance <= 0 && residualAfterDDF > 0 && subLoanRules?.length > 0) {
+      subLoanRules.forEach(rule => {
+        const balance = subLoanBalances[rule.loan_id] || 0;
+        if (balance <= 0) {
+          subLoanPayments[rule.loan_id] = 0;
+          return;
+        }
+        const pct = rule.pct_of_cf || 0;
+        const payment = Math.min(residualAfterDDF * pct, balance);
+        subLoanPayments[rule.loan_id] = payment;
+        subLoanBalances[rule.loan_id] = Math.max(0, balance - payment);
+        residualAfterDDF -= payment;
+      });
+    }
+
+    // Adjustments
+    const lpFee = (p.lp_partnership_fee || 0) * escalAdj;
+    const gpFee = (p.gp_management_fee || 0) * escalAdj;
+    const totalAdjustments = -(lpFee + gpFee);
+    const adjustedCF = cashFlow + totalAdjustments;
 
     years.push({
       year: yr,
-      gpr, vacancy, otherIncome, egi,
-      mgmtFee, payroll, admin, utilities, maintenance, insurance, reTaxes, otherOpex, repReserve,
-      totalOpex,
+      residentialRev, commercialRev, totalRev,
+      otherIncomeDetail, totalOtherIncome,
+      adjustedIncome, vacancy, egi,
+      opexDetail, repReserve, totalOpex,
       noi,
-      seniorADS, subdebtADS, totalADS,
-      seniorDSCR, totalDSCR,
+      seniorADS, totalADS, seniorDSCR,
       cashFlow,
-      ddfPayment, ddfBalance, residualCF,
+      ddfPayment, ddfBalance,
+      subLoanPayments,
+      lpFee, gpFee, totalAdjustments, adjustedCF,
+      residualCF: residualAfterDDF,
     });
   }
 
-  return { years, ddfPaidYear, seniorADS, totalADS };
+  return { years, ddfPaidYear, seniorADS };
 }
 
-/* ── sub-components ──────────────────────────────────────────── */
-
-function FieldRow({ label, note, children }) {
-  return (
-    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6, gap: 8 }}>
-      <div>
-        <div style={{ fontSize: 10, color: "#444" }}>{label}</div>
-        {note && <div style={{ fontSize: 8, color: "#bbb" }}>{note}</div>}
-      </div>
-      {children}
-    </div>
-  );
-}
-
-function InputField({ value, onChange, prefix, suffix, width, step, pct }) {
+/* ── tiny inline input ──────────────────────────────────────── */
+function TinyInput({ value, onChange, pct, prefix, suffix, width, step, placeholder }) {
   const display = pct ? (value * 100) : value;
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 3 }}>
@@ -161,6 +215,7 @@ function InputField({ value, onChange, prefix, suffix, width, step, pct }) {
         type="number"
         value={display || ""}
         step={step || (pct ? 0.1 : 1000)}
+        placeholder={placeholder}
         onChange={e => {
           const v = Number(e.target.value);
           onChange(pct ? v / 100 : v);
@@ -176,24 +231,6 @@ function InputField({ value, onChange, prefix, suffix, width, step, pct }) {
   );
 }
 
-function MetricCard({ label, value, sub, accent }) {
-  const colors = {
-    navy:  { bg: "#f0f3f9", border: "#b8c8e0", text: "#1a3a6b" },
-    green: { bg: "#f0f9f4", border: "#b8dfc8", text: "#1a6b3c" },
-    red:   { bg: "#fce8e3", border: "#f5c2b0", text: "#8B2500" },
-    amber: { bg: "#fdf8ef", border: "#e8d5a8", text: "#5a3a00" },
-    gray:  { bg: "#f5f5f3", border: "#e0e0e0", text: "#555" },
-  };
-  const c = colors[accent] || colors.gray;
-  return (
-    <div style={{ background: c.bg, border: `1px solid ${c.border}`, borderRadius: 6, padding: "8px 12px", flex: "1 1 120px", minWidth: 120 }}>
-      <div style={{ fontSize: 8, color: c.text, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 3 }}>{label}</div>
-      <div style={{ fontSize: 15, fontWeight: 700, color: c.text }}>{value}</div>
-      {sub && <div style={{ fontSize: 8, color: "#888", marginTop: 2 }}>{sub}</div>}
-    </div>
-  );
-}
-
 /* ══════════════════════════════════════════════════════════════
    MAIN COMPONENT
    ══════════════════════════════════════════════════════════════ */
@@ -202,20 +239,56 @@ export default function ProformaPanel() {
   const { moduleStates, updateModule } = useLihtc();
 
   // ── Pull inputs ──
-  const pf = { ...DEFAULT_PROFORMA, ...moduleStates.proforma };
-  const opex = { ...DEFAULT_PROFORMA.opex, ...(pf.opex || {}) };
-  const pfWithOpex = { ...pf, opex };
+  const saved = moduleStates.proforma || {};
+  const pf = { ...DEFAULT_PROFORMA, ...saved };
+  const opexLines = pf.opex_lines || DEFAULT_OPEX_LINES;
+  const customOpex = pf.custom_opex || [];
+  const otherIncomeLines = pf.other_income || DEFAULT_OTHER_INCOME;
+  const customOtherIncome = pf.custom_other_income || [];
+  const subLoanRules = pf.sub_loan_rules || [];
 
   const update = patch => updateModule("proforma", { ...pf, ...patch });
-  const updateOpex = patch => update({ opex: { ...opex, ...patch } });
+
+  const updateOpexLine = (id, patch) => {
+    const isCustom = customOpex.some(l => l.id === id);
+    if (isCustom) {
+      update({ custom_opex: customOpex.map(l => l.id === id ? { ...l, ...patch } : l) });
+    } else {
+      update({ opex_lines: opexLines.map(l => l.id === id ? { ...l, ...patch } : l) });
+    }
+  };
+
+  const addCustomOpex = () => {
+    const id = `custom_opex_${Date.now()}`;
+    update({ custom_opex: [...customOpex, { id, label: "New Expense", amount: 0, escalates: true }] });
+  };
+
+  const removeCustomOpex = (id) => {
+    update({ custom_opex: customOpex.filter(l => l.id !== id) });
+  };
+
+  const updateOtherIncomeLine = (id, patch) => {
+    const isCustom = customOtherIncome.some(l => l.id === id);
+    if (isCustom) {
+      update({ custom_other_income: customOtherIncome.map(l => l.id === id ? { ...l, ...patch } : l) });
+    } else {
+      update({ other_income: otherIncomeLines.map(l => l.id === id ? { ...l, ...patch } : l) });
+    }
+  };
+
+  const addCustomOtherIncome = () => {
+    const id = `custom_oi_${Date.now()}`;
+    update({ custom_other_income: [...customOtherIncome, { id, label: "New Income", annual: 0, escalates: true }] });
+  };
+
+  const removeCustomOtherIncome = (id) => {
+    update({ custom_other_income: customOtherIncome.filter(l => l.id !== id) });
+  };
 
   // ── Unit Mix → Gross Rent ──
   const unitMix = moduleStates.unit_mix;
   const rows = unitMix?.rows ?? [];
   const totalUnits = rows.reduce((s, r) => s + (r.count || 0), 0) || 175;
-
-  // Read computed annual revenue published by UnitMix module
-  // Falls back to 0 if UnitMix hasn't rendered yet (user should visit Unit Mix tab first)
   const grossRent = unitMix?.computed_annual_revenue || 0;
 
   // ── Debt module → ADS ──
@@ -224,7 +297,7 @@ export default function ProformaPanel() {
   const permLoan = permanent.loan_amount || 0;
   const permRate = permanent.rate || 0.0585;
   const permAmort = permanent.amortization_years || 40;
-  const subdebt = debt.subdebt || [];
+  const rawSubdebt = debt.subdebt || [];
 
   // ── Budget → DDF ──
   const budget = moduleStates.budget;
@@ -233,15 +306,17 @@ export default function ProformaPanel() {
 
   // ── Compute 15-year proforma ──
   const result = useMemo(
-    () => computeProforma(pfWithOpex, grossRent, totalUnits, permLoan, permRate, permAmort, subdebt, deferredDevFee),
-    [pfWithOpex, grossRent, totalUnits, permLoan, permRate, permAmort, subdebt, deferredDevFee]
+    () => computeProforma(pf, grossRent, totalUnits, permLoan, permRate, permAmort, rawSubdebt, deferredDevFee, subLoanRules),
+    [pf, grossRent, totalUnits, permLoan, permRate, permAmort, rawSubdebt, deferredDevFee, subLoanRules]
   );
 
   const yr1 = result.years[0] || {};
 
   // ── Wire Year 1 NOI back to Debt module ──
+  const prevNOI = useRef(0);
   useEffect(() => {
-    if (yr1.noi > 0 && Math.abs(yr1.noi - (permanent.noi_override || 0)) > 100) {
+    if (yr1.noi > 0 && Math.abs(yr1.noi - prevNOI.current) > 100) {
+      prevNOI.current = yr1.noi;
       updateModule("debt", {
         permanent: { ...permanent, noi_override: Math.round(yr1.noi), use_noi_override: true },
       });
@@ -250,9 +325,25 @@ export default function ProformaPanel() {
 
   // ── Table display state ──
   const [showAllYears, setShowAllYears] = useState(false);
+  const [showInputs, setShowInputs] = useState(true);
   const displayYears = showAllYears ? result.years : result.years.filter(y => y.year <= 5 || y.year === 10 || y.year === 15);
 
-  const cardStyle = { background: "white", border: "1px solid #e0e0e0", borderRadius: 6, padding: "16px 18px", marginBottom: 16 };
+  // ── Styles ──
+  const hdrCell = { padding: "6px 10px", textAlign: "right", fontSize: 9, fontWeight: 700, color: "#888", letterSpacing: "0.04em", whiteSpace: "nowrap", borderBottom: "2px solid #333" };
+  const labelCell = { padding: "4px 10px 4px 16px", textAlign: "left", fontSize: 10, color: "#333", whiteSpace: "nowrap" };
+  const labelCellBold = { ...labelCell, fontWeight: 700, color: "#111", paddingLeft: 10 };
+  const labelCellSection = { ...labelCell, fontWeight: 700, fontSize: 9, color: "#888", textTransform: "uppercase", letterSpacing: "0.06em", paddingLeft: 10, paddingTop: 10 };
+  const numCell = { padding: "4px 10px", textAlign: "right", fontSize: 10, fontFamily: "Inter, sans-serif", color: "#333", whiteSpace: "nowrap" };
+  const numCellBold = { ...numCell, fontWeight: 700, color: "#111" };
+  const numCellAccent = (color) => ({ ...numCellBold, color });
+  const separatorRow = { height: 6 };
+  const sectionBorderTop = { borderTop: "1px solid #ddd" };
+  const heavyBorderTop = { borderTop: "2px solid #333" };
+
+  const allOpexLines = [...opexLines, ...customOpex];
+  const allOtherIncome = [...otherIncomeLines, ...customOtherIncome];
+
+  const cardStyle = { background: "white", border: "1px solid #e0e0e0", borderRadius: 6, overflow: "hidden" };
 
   return (
     <div style={{ fontFamily: "Inter, sans-serif" }}>
@@ -289,219 +380,390 @@ export default function ProformaPanel() {
 
       {/* ── METRICS BAR ── */}
       <div style={{ display: "flex", gap: 10, marginBottom: 16, flexWrap: "wrap" }}>
-        <MetricCard label="Gross Pot. Rent" value={fmt$(yr1.gpr)} sub={`${totalUnits} units`} accent="navy" />
-        <MetricCard label="Yr 1 EGI" value={fmt$(yr1.egi)} sub={`${fmtPct(pf.vacancy_rate)} vacancy`} accent="green" />
-        <MetricCard label="Yr 1 NOI" value={fmt$(yr1.noi)} sub={`${fmtPct(yr1.totalOpex / yr1.egi)} expense ratio`} accent="green" />
-        <MetricCard label="Cash Flow" value={yr1.cashFlow < 0 ? `(${fmt$(yr1.cashFlow)})` : fmt$(yr1.cashFlow)} sub="After debt service" accent={yr1.cashFlow >= 0 ? "amber" : "red"} />
-        <MetricCard label="Sr. Debt Service" value={fmt$(result.seniorADS)} sub={`${fmtX(yr1.seniorDSCR)} DSCR`} accent="navy" />
+        {[
+          { label: "Gross Pot. Rent",  value: fmt$(yr1.residentialRev), sub: `${totalUnits} units`, accent: "#1a3a6b", bg: "#f0f3f9", border: "#b8c8e0" },
+          { label: "Yr 1 EGI",        value: fmt$(yr1.egi), sub: `${fmtPct(pf.vacancy_rate)} vacancy`, accent: "#1a6b3c", bg: "#f0f9f4", border: "#b8dfc8" },
+          { label: "Yr 1 NOI",        value: fmt$(yr1.noi), sub: `${fmtPct(yr1.noi / yr1.egi)} margin`, accent: "#1a6b3c", bg: "#f0f9f4", border: "#b8dfc8" },
+          { label: "Cash Flow",       value: yr1.cashFlow < 0 ? `(${fmt$(yr1.cashFlow)})` : fmt$(yr1.cashFlow), sub: "After debt service", accent: yr1.cashFlow >= 0 ? "#5a3a00" : "#8B2500", bg: yr1.cashFlow >= 0 ? "#fdf8ef" : "#fce8e3", border: yr1.cashFlow >= 0 ? "#e8d5a8" : "#f5c2b0" },
+          { label: "Sr. Debt Service", value: fmt$(result.seniorADS), sub: `${fmtX(yr1.seniorDSCR)} DSCR`, accent: "#1a3a6b", bg: "#f0f3f9", border: "#b8c8e0" },
+        ].map(m => (
+          <div key={m.label} style={{ background: m.bg, border: `1px solid ${m.border}`, borderRadius: 6, padding: "8px 12px", flex: "1 1 140px", minWidth: 140 }}>
+            <div style={{ fontSize: 8, color: m.accent, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 3 }}>{m.label}</div>
+            <div style={{ fontSize: 15, fontWeight: 700, color: m.accent }}>{m.value}</div>
+            {m.sub && <div style={{ fontSize: 8, color: "#888", marginTop: 2 }}>{m.sub}</div>}
+          </div>
+        ))}
       </div>
 
-      {/* ── MAIN GRID: Inputs left, Table right ── */}
-      <div style={{ display: "grid", gridTemplateColumns: "280px 1fr", gap: 16 }}>
+      {/* ── TOGGLE INPUTS ── */}
+      <div style={{ marginBottom: 12, display: "flex", gap: 8 }}>
+        <button onClick={() => setShowInputs(!showInputs)} style={{
+          background: "none", border: "1px solid #ddd", borderRadius: 3,
+          padding: "4px 10px", fontSize: 9, color: "#888", cursor: "pointer",
+        }}>
+          {showInputs ? "Hide Inputs" : "Show Inputs"}
+        </button>
+        <button onClick={() => setShowAllYears(!showAllYears)} style={{
+          background: "none", border: "1px solid #ddd", borderRadius: 3,
+          padding: "4px 10px", fontSize: 9, color: "#888", cursor: "pointer",
+        }}>
+          {showAllYears ? "Summary Years" : "All 15 Years"}
+        </button>
+      </div>
 
-        {/* ─── LEFT: INPUTS ─── */}
-        <div>
+      {/* ── INPUTS PANEL (collapsible) ── */}
+      {showInputs && (
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginBottom: 16 }}>
+
           {/* Assumptions */}
-          <div style={cardStyle}>
+          <div style={{ ...cardStyle, padding: "12px 14px" }}>
             <div style={{ fontSize: 9, fontWeight: 700, color: "#1a3a6b", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 10 }}>
               Assumptions
             </div>
-            <FieldRow label="Vacancy Rate">
-              <InputField value={pf.vacancy_rate} onChange={v => update({ vacancy_rate: v })} pct suffix="%" width={60} />
-            </FieldRow>
-            <FieldRow label="Revenue Escalation">
-              <InputField value={pf.revenue_escalation} onChange={v => update({ revenue_escalation: v })} pct suffix="% / yr" width={60} />
-            </FieldRow>
-            <FieldRow label="Expense Escalation">
-              <InputField value={pf.expense_escalation} onChange={v => update({ expense_escalation: v })} pct suffix="% / yr" width={60} />
-            </FieldRow>
-            <FieldRow label="DDF Payoff Rate" note="% of surplus CF to DDF">
-              <InputField value={pf.ddf_payoff_pct} onChange={v => update({ ddf_payoff_pct: v })} pct suffix="%" width={60} />
-            </FieldRow>
-            <FieldRow label="Repl. Reserve / Unit">
-              <InputField value={pf.replacement_reserve_per_unit} onChange={v => update({ replacement_reserve_per_unit: v })} prefix="$" width={70} step={25} />
-            </FieldRow>
-          </div>
-
-          {/* Operating Expenses */}
-          <div style={cardStyle}>
-            <div style={{ fontSize: 9, fontWeight: 700, color: "#8B2500", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 10 }}>
-              Year 1 Operating Expenses
-            </div>
-            <FieldRow label="Management Fee" note="% of EGI">
-              <InputField value={opex.management_fee_pct} onChange={v => updateOpex({ management_fee_pct: v })} pct suffix="%" width={60} />
-            </FieldRow>
-            <FieldRow label="Payroll">
-              <InputField value={opex.payroll} onChange={v => updateOpex({ payroll: v })} prefix="$" width={90} />
-            </FieldRow>
-            <FieldRow label="Administrative">
-              <InputField value={opex.admin} onChange={v => updateOpex({ admin: v })} prefix="$" width={90} />
-            </FieldRow>
-            <FieldRow label="Utilities">
-              <InputField value={opex.utilities} onChange={v => updateOpex({ utilities: v })} prefix="$" width={90} />
-            </FieldRow>
-            <FieldRow label="Maintenance">
-              <InputField value={opex.maintenance} onChange={v => updateOpex({ maintenance: v })} prefix="$" width={90} />
-            </FieldRow>
-            <FieldRow label="Insurance">
-              <InputField value={opex.insurance} onChange={v => updateOpex({ insurance: v })} prefix="$" width={90} />
-            </FieldRow>
-            <FieldRow label="Real Estate Taxes">
-              <InputField value={opex.real_estate_taxes} onChange={v => updateOpex({ real_estate_taxes: v })} prefix="$" width={90} />
-            </FieldRow>
-            <FieldRow label="Other OpEx">
-              <InputField value={opex.other_opex} onChange={v => updateOpex({ other_opex: v })} prefix="$" width={90} />
-            </FieldRow>
-
-            {/* Total */}
-            <div style={{ borderTop: "2px solid #333", marginTop: 10, paddingTop: 8, display: "flex", justifyContent: "space-between" }}>
-              <span style={{ fontSize: 11, fontWeight: 700 }}>Total Year 1 OpEx</span>
-              <span style={{ fontSize: 11, fontWeight: 700 }}>{fmt$(yr1.totalOpex)}</span>
-            </div>
-            <div style={{ display: "flex", justifyContent: "space-between", marginTop: 4 }}>
-              <span style={{ fontSize: 9, color: "#888" }}>Per unit</span>
-              <span style={{ fontSize: 9, color: "#888" }}>{fmt$(yr1.totalOpex / totalUnits)} / yr</span>
-            </div>
-          </div>
-
-          {/* Other Income */}
-          <div style={cardStyle}>
-            <div style={{ fontSize: 9, fontWeight: 700, color: "#1a6b3c", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 10 }}>
-              Other Income (Annual)
-            </div>
-            {(pf.other_income || DEFAULT_PROFORMA.other_income).map((item, i) => (
-              <FieldRow key={i} label={item.label}>
-                <InputField
-                  value={item.annual}
-                  onChange={v => {
-                    const arr = [...(pf.other_income || DEFAULT_PROFORMA.other_income)];
-                    arr[i] = { ...arr[i], annual: v };
-                    update({ other_income: arr });
-                  }}
-                  prefix="$" width={90}
-                />
-              </FieldRow>
-            ))}
-          </div>
-
-          {/* Year 1 Waterfall */}
-          <div style={cardStyle}>
-            <div style={{ fontSize: 9, fontWeight: 700, color: "#555", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 10 }}>
-              Year 1 Waterfall
-            </div>
             {[
-              { label: "Gross Potential Rent",   value: yr1.gpr,       indent: 0 },
-              { label: `Less Vacancy (${fmtPct(pf.vacancy_rate)})`, value: -yr1.vacancy, indent: 0, deduct: true },
-              { label: "Other Income",            value: yr1.otherIncome, indent: 0 },
-              { label: "Effective Gross Income",  value: yr1.egi,       indent: 0, bold: true },
-              null,
-              { label: "Less Operating Expenses", value: -yr1.totalOpex, indent: 0, deduct: true },
-              { label: "Net Operating Income",    value: yr1.noi,       indent: 0, bold: true, accent: "#1a6b3c" },
-              null,
-              { label: "Senior Debt Service",     value: -yr1.seniorADS, indent: 0, deduct: true },
-              { label: "Subordinate DS",          value: -yr1.subdebtADS, indent: 0, deduct: true },
-              { label: "Cash Flow After DS",      value: yr1.cashFlow,  indent: 0, bold: true, accent: yr1.cashFlow >= 0 ? "#5a3a00" : "#8B2500" },
-            ].map((r, i) => r === null ? (
-              <div key={i} style={{ height: 6 }} />
-            ) : (
-              <div key={i} style={{
-                display: "flex", justifyContent: "space-between",
-                padding: r.bold ? "5px 0" : "2px 0",
-                borderTop: r.bold ? "1px solid #ddd" : "none",
-              }}>
-                <span style={{ fontSize: 10, fontWeight: r.bold ? 700 : 400, color: r.deduct ? "#888" : "#333", paddingLeft: r.indent * 12 }}>
-                  {r.label}
-                </span>
-                <span style={{ fontSize: 10, fontWeight: r.bold ? 700 : 400, color: r.accent || (r.deduct ? "#888" : "#333") }}>
-                  {r.deduct ? `(${fmt$(Math.abs(r.value))})` : (r.value < 0 ? `(${fmt$(r.value)})` : fmt$(r.value))}
-                </span>
+              { label: "Vacancy Rate", val: pf.vacancy_rate, key: "vacancy_rate", pct: true },
+              { label: "Revenue Escalation", val: pf.revenue_escalation, key: "revenue_escalation", pct: true, suffix: "/ yr" },
+              { label: "Expense Escalation", val: pf.expense_escalation, key: "expense_escalation", pct: true, suffix: "/ yr" },
+              { label: "Reserve Escalation", val: pf.reserve_escalation, key: "reserve_escalation", pct: true, suffix: "/ yr" },
+              { label: "Repl. Reserve / Unit", val: pf.replacement_reserve_per_unit, key: "replacement_reserve_per_unit", prefix: "$", step: 25 },
+              { label: "DDF Payoff Rate", val: pf.ddf_payoff_pct, key: "ddf_payoff_pct", pct: true, note: "% of CF to DDF" },
+            ].map(f => (
+              <div key={f.key} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 5 }}>
+                <div>
+                  <div style={{ fontSize: 10, color: "#444" }}>{f.label}</div>
+                  {f.note && <div style={{ fontSize: 8, color: "#bbb" }}>{f.note}</div>}
+                </div>
+                <TinyInput value={f.val} onChange={v => update({ [f.key]: v })} pct={f.pct} prefix={f.prefix} suffix={f.pct ? (f.suffix ? `% ${f.suffix}` : "%") : f.suffix} width={60} step={f.step} />
               </div>
             ))}
           </div>
-        </div>
 
-        {/* ─── RIGHT: 15-YEAR TABLE ─── */}
-        <div style={{ ...cardStyle, padding: "12px 14px", overflow: "auto" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-            <div style={{ fontSize: 9, fontWeight: 700, color: "#1a3a6b", textTransform: "uppercase", letterSpacing: "0.08em" }}>
-              15-Year Projection
-            </div>
-            <button
-              onClick={() => setShowAllYears(!showAllYears)}
-              style={{
+          {/* Year 1 Operating Expenses */}
+          <div style={{ ...cardStyle, padding: "12px 14px" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+              <span style={{ fontSize: 9, fontWeight: 700, color: "#8B2500", textTransform: "uppercase", letterSpacing: "0.08em" }}>
+                Year 1 Operating Expenses
+              </span>
+              <button onClick={addCustomOpex} style={{
                 background: "none", border: "1px solid #ddd", borderRadius: 3,
-                padding: "3px 8px", fontSize: 9, color: "#888", cursor: "pointer",
-              }}
-            >
-              {showAllYears ? "Summary View" : "All Years"}
-            </button>
+                padding: "2px 6px", fontSize: 8, color: "#888", cursor: "pointer",
+              }}>+ Add Line</button>
+            </div>
+            {opexLines.map(line => (
+              <div key={line.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                <span style={{ fontSize: 10, color: "#444" }}>{line.label}</span>
+                {line.is_pct_egi ? (
+                  <TinyInput value={line.pct} onChange={v => updateOpexLine(line.id, { pct: v })} pct suffix="% EGI" width={55} />
+                ) : (
+                  <TinyInput value={line.amount} onChange={v => updateOpexLine(line.id, { amount: v })} prefix="$" width={80} />
+                )}
+              </div>
+            ))}
+            {customOpex.map(line => (
+              <div key={line.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4, gap: 4 }}>
+                <input
+                  value={line.label}
+                  onChange={e => updateOpexLine(line.id, { label: e.target.value })}
+                  style={{ fontSize: 10, border: "1px solid #eee", borderRadius: 3, padding: "2px 4px", width: 100, outline: "none" }}
+                />
+                <div style={{ display: "flex", alignItems: "center", gap: 2 }}>
+                  <TinyInput value={line.amount} onChange={v => updateOpexLine(line.id, { amount: v })} prefix="$" width={70} />
+                  <button onClick={() => removeCustomOpex(line.id)} style={{
+                    background: "none", border: "none", color: "#ccc", cursor: "pointer", fontSize: 12, padding: "0 2px",
+                  }}>×</button>
+                </div>
+              </div>
+            ))}
+            <div style={{ borderTop: "2px solid #333", marginTop: 8, paddingTop: 6, display: "flex", justifyContent: "space-between" }}>
+              <span style={{ fontSize: 10, fontWeight: 700 }}>Total Yr 1 OpEx</span>
+              <span style={{ fontSize: 10, fontWeight: 700 }}>{fmt$(yr1.totalOpex)}</span>
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between", marginTop: 3 }}>
+              <span style={{ fontSize: 8, color: "#888" }}>Per unit / year</span>
+              <span style={{ fontSize: 8, color: "#888" }}>{fmt$(yr1.totalOpex / totalUnits)}</span>
+            </div>
           </div>
 
-          <div style={{ overflowX: "auto" }}>
-            <table style={{ borderCollapse: "collapse", fontSize: 10, width: "100%", minWidth: 600 }}>
-              <thead>
-                <tr style={{ borderBottom: "2px solid #333" }}>
-                  <th style={thStyle}>Year</th>
-                  <th style={thStyleR}>GPR</th>
-                  <th style={thStyleR}>EGI</th>
-                  <th style={thStyleR}>OpEx</th>
-                  <th style={{ ...thStyleR, color: "#1a6b3c" }}>NOI</th>
-                  <th style={thStyleR}>ADS</th>
-                  <th style={{ ...thStyleR, color: "#5a3a00" }}>Cash Flow</th>
-                  <th style={{ ...thStyleR, color: "#1a3a6b" }}>Sr. DSCR</th>
-                  <th style={{ ...thStyleR, color: "#5a3a00" }}>DDF Bal.</th>
-                </tr>
-              </thead>
-              <tbody>
-                {displayYears.map((y, idx) => {
-                  const dscrOk = y.seniorDSCR >= 1.15;
+          {/* Other Income + Adjustments */}
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            <div style={{ ...cardStyle, padding: "12px 14px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                <span style={{ fontSize: 9, fontWeight: 700, color: "#1a6b3c", textTransform: "uppercase", letterSpacing: "0.08em" }}>
+                  Other Income (Annual)
+                </span>
+                <button onClick={addCustomOtherIncome} style={{
+                  background: "none", border: "1px solid #ddd", borderRadius: 3,
+                  padding: "2px 6px", fontSize: 8, color: "#888", cursor: "pointer",
+                }}>+ Add Line</button>
+              </div>
+              {otherIncomeLines.map(item => (
+                <div key={item.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                  <span style={{ fontSize: 10, color: "#444" }}>{item.label}</span>
+                  <TinyInput value={item.annual} onChange={v => updateOtherIncomeLine(item.id, { annual: v })} prefix="$" width={80} />
+                </div>
+              ))}
+              {customOtherIncome.map(item => (
+                <div key={item.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4, gap: 4 }}>
+                  <input
+                    value={item.label}
+                    onChange={e => updateOtherIncomeLine(item.id, { label: e.target.value })}
+                    style={{ fontSize: 10, border: "1px solid #eee", borderRadius: 3, padding: "2px 4px", width: 100, outline: "none" }}
+                  />
+                  <div style={{ display: "flex", alignItems: "center", gap: 2 }}>
+                    <TinyInput value={item.annual} onChange={v => updateOtherIncomeLine(item.id, { annual: v })} prefix="$" width={70} />
+                    <button onClick={() => removeCustomOtherIncome(item.id)} style={{
+                      background: "none", border: "none", color: "#ccc", cursor: "pointer", fontSize: 12, padding: "0 2px",
+                    }}>×</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Adjustments */}
+            <div style={{ ...cardStyle, padding: "12px 14px" }}>
+              <div style={{ fontSize: 9, fontWeight: 700, color: "#555", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 10 }}>
+                Adjustments
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                <span style={{ fontSize: 10, color: "#444" }}>LP Partnership Fee</span>
+                <TinyInput value={pf.lp_partnership_fee} onChange={v => update({ lp_partnership_fee: v })} prefix="$" width={80} />
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                <span style={{ fontSize: 10, color: "#444" }}>GP Management Fee</span>
+                <TinyInput value={pf.gp_management_fee} onChange={v => update({ gp_management_fee: v })} prefix="$" width={80} />
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                <span style={{ fontSize: 10, color: "#444" }}>Adj. Escalation</span>
+                <TinyInput value={pf.adjustment_escalation} onChange={v => update({ adjustment_escalation: v })} pct suffix="% / yr" width={55} />
+              </div>
+            </div>
+
+            {/* Sub Loan Waterfall Rules */}
+            {rawSubdebt.filter(l => l.loan_type !== "deferred_fee").length > 0 && (
+              <div style={{ ...cardStyle, padding: "12px 14px" }}>
+                <div style={{ fontSize: 9, fontWeight: 700, color: "#5a3a00", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 10 }}>
+                  Sub Loan Payoff Rules
+                </div>
+                <div style={{ fontSize: 8, color: "#999", marginBottom: 6 }}>
+                  % of remaining CF after DDF paid off
+                </div>
+                {rawSubdebt.filter(l => l.loan_type !== "deferred_fee").map(loan => {
+                  const rule = subLoanRules.find(r => r.loan_id === loan.id);
+                  const pctVal = rule?.pct_of_cf || 0;
                   return (
-                    <tr key={y.year} style={{ borderBottom: "1px solid #f0f0f0", background: idx % 2 === 0 ? "white" : "#fafafa" }}>
-                      <td style={tdStyle}>{y.year}</td>
-                      <td style={tdStyleR}>{fmtK(y.gpr)}</td>
-                      <td style={tdStyleR}>{fmtK(y.egi)}</td>
-                      <td style={tdStyleR}>{fmtK(y.totalOpex)}</td>
-                      <td style={{ ...tdStyleR, fontWeight: 600, color: "#1a6b3c" }}>{fmtK(y.noi)}</td>
-                      <td style={tdStyleR}>{fmtK(y.totalADS)}</td>
-                      <td style={{ ...tdStyleR, fontWeight: 600, color: y.cashFlow >= 0 ? "#5a3a00" : "#8B2500" }}>
-                        {y.cashFlow < 0 ? `(${fmtK(Math.abs(y.cashFlow))})` : fmtK(y.cashFlow)}
-                      </td>
-                      <td style={{ ...tdStyleR, fontWeight: 600, color: dscrOk ? "#1a6b3c" : "#8B2500" }}>
-                        {fmtX(y.seniorDSCR)}
-                      </td>
-                      <td style={{ ...tdStyleR, color: y.ddfBalance > 0 ? "#5a3a00" : "#1a6b3c" }}>
-                        {y.ddfBalance > 0 ? fmtK(y.ddfBalance) : "Paid ✓"}
-                      </td>
-                    </tr>
+                    <div key={loan.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                      <span style={{ fontSize: 10, color: "#444" }}>{loan.label}</span>
+                      <TinyInput
+                        value={pctVal}
+                        onChange={v => {
+                          const updated = subLoanRules.filter(r => r.loan_id !== loan.id);
+                          if (v > 0) updated.push({ loan_id: loan.id, label: loan.label, pct_of_cf: v });
+                          update({ sub_loan_rules: updated });
+                        }}
+                        pct suffix="%" width={50}
+                      />
+                    </div>
                   );
                 })}
-              </tbody>
-            </table>
+              </div>
+            )}
           </div>
+        </div>
+      )}
 
-          {/* DDF payoff summary */}
-          {deferredDevFee > 0 && (
-            <div style={{
-              marginTop: 12, padding: "8px 12px", borderRadius: 4, fontSize: 10,
-              background: result.ddfPaidYear ? "#f0f9f4" : "#fce8e3",
-              border: `1px solid ${result.ddfPaidYear ? "#b8dfc8" : "#f5c2b0"}`,
-              color: result.ddfPaidYear ? "#1a6b3c" : "#8B2500",
-            }}>
-              <strong>DDF Payoff:</strong>{" "}
-              {result.ddfPaidYear
-                ? `Deferred Developer Fee (${fmt$(deferredDevFee)}) fully repaid by Year ${result.ddfPaidYear} from ${fmtPct(pf.ddf_payoff_pct)} of surplus cash flow.`
-                : `Deferred Developer Fee (${fmt$(deferredDevFee)}) NOT fully repaid within 15 years. Remaining balance: ${fmt$(result.years[14]?.ddfBalance || 0)}.`
-              }
-            </div>
-          )}
+      {/* ══════════════════════════════════════════════════════════════
+         TRANSPOSED PROFORMA TABLE
+         Years across top, categories on left
+         ══════════════════════════════════════════════════════════════ */}
+      <div style={{ ...cardStyle, padding: 0 }}>
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ borderCollapse: "collapse", fontSize: 10, width: "100%", minWidth: 800 }}>
+            <thead>
+              <tr>
+                <th style={{ ...hdrCell, textAlign: "left", minWidth: 200, position: "sticky", left: 0, background: "white", zIndex: 1 }}>
+                  OPERATING PROFORMA
+                </th>
+                {displayYears.map(y => (
+                  <th key={y.year} style={hdrCell}>EOY {y.year}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+
+              {/* ── INCOME SECTION ── */}
+              <tr>
+                <td style={labelCellSection} colSpan={displayYears.length + 1}>Income</td>
+              </tr>
+              <ProformaRow label="Residential Revenue" years={displayYears} getter={y => y.residentialRev} />
+              {/* Commercial only if non-zero */}
+              {displayYears.some(y => y.commercialRev > 0) && (
+                <ProformaRow label="Commercial Revenue" years={displayYears} getter={y => y.commercialRev} />
+              )}
+              <ProformaRow label="Total Revenue" years={displayYears} getter={y => y.totalRev} bold />
+
+              {/* Other income lines */}
+              {allOtherIncome.map(item => (
+                <ProformaRow key={item.id} label={item.label} years={displayYears} getter={y => y.otherIncomeDetail[item.id] || 0} />
+              ))}
+
+              <ProformaRow label="Adjusted Income" years={displayYears} getter={y => y.adjustedIncome} bold border />
+              <ProformaRow label={`Vacancy (${fmtPct(pf.vacancy_rate)})`} years={displayYears} getter={y => -y.vacancy} deduct />
+              <ProformaRow label="Effective Gross Income" years={displayYears} getter={y => y.egi} bold border />
+
+              {/* ── SEPARATOR ── */}
+              <tr><td style={separatorRow} colSpan={displayYears.length + 1} /></tr>
+
+              {/* ── OPERATING EXPENSES ── */}
+              <tr>
+                <td style={labelCellSection} colSpan={displayYears.length + 1}>Operating Expenses</td>
+              </tr>
+              {allOpexLines.map(line => (
+                <ProformaRow key={line.id} label={line.label} years={displayYears} getter={y => -(y.opexDetail[line.id] || 0)} deduct />
+              ))}
+              <ProformaRow label="Replacement Reserves" years={displayYears} getter={y => -y.repReserve} deduct />
+              <ProformaRow label="Total Operating Expenses" years={displayYears} getter={y => -y.totalOpex} bold border deduct />
+
+              {/* ── SEPARATOR ── */}
+              <tr><td style={separatorRow} colSpan={displayYears.length + 1} /></tr>
+
+              {/* ── NOI ── */}
+              <ProformaRow label="Net Operating Income" years={displayYears} getter={y => y.noi} bold heavy accent="#1a6b3c" />
+
+              {/* ── SEPARATOR ── */}
+              <tr><td style={separatorRow} colSpan={displayYears.length + 1} /></tr>
+
+              {/* ── DEBT SERVICE ── */}
+              <ProformaRow label="ADS (Senior)" years={displayYears} getter={y => -y.seniorADS} deduct />
+              <ProformaRow label="Total Hard Pay Debt Service" years={displayYears} getter={y => -y.totalADS} bold border deduct />
+
+              {/* ── DSCR ── */}
+              <tr>
+                <td style={{ ...labelCell, fontWeight: 600, color: "#1a3a6b" }}>DSCR</td>
+                {displayYears.map(y => (
+                  <td key={y.year} style={{
+                    ...numCell, fontWeight: 700,
+                    color: y.seniorDSCR >= 1.15 ? "#1a6b3c" : "#8B2500",
+                  }}>
+                    {fmtX(y.seniorDSCR)}
+                  </td>
+                ))}
+              </tr>
+
+              {/* ── SEPARATOR ── */}
+              <tr><td style={separatorRow} colSpan={displayYears.length + 1} /></tr>
+
+              {/* ── CASH FLOW ── */}
+              <ProformaRow label="Cash Flow" years={displayYears} getter={y => y.cashFlow} bold heavy accent="#5a3a00" signed />
+
+              {/* ── SEPARATOR ── */}
+              <tr><td style={separatorRow} colSpan={displayYears.length + 1} /></tr>
+
+              {/* ── ADJUSTMENTS ── */}
+              <tr>
+                <td style={labelCellSection} colSpan={displayYears.length + 1}>Adjustments</td>
+              </tr>
+              <ProformaRow label="LP Partnership Mgt Fee" years={displayYears} getter={y => -y.lpFee} deduct />
+              <ProformaRow label="GP Management Fee" years={displayYears} getter={y => -y.gpFee} deduct />
+              <ProformaRow label="Total Adjustments" years={displayYears} getter={y => y.totalAdjustments} bold border deduct />
+
+              {/* ── SEPARATOR ── */}
+              <tr><td style={separatorRow} colSpan={displayYears.length + 1} /></tr>
+
+              {/* ── ADJUSTED CF ── */}
+              <ProformaRow label="Adjusted Cash Flow" years={displayYears} getter={y => y.adjustedCF} bold heavy accent="#5a3a00" signed />
+
+              {/* ── SEPARATOR ── */}
+              <tr><td style={separatorRow} colSpan={displayYears.length + 1} /></tr>
+
+              {/* ── DDF PAYOFF ── */}
+              {deferredDevFee > 0 && (
+                <>
+                  <tr>
+                    <td style={labelCellSection} colSpan={displayYears.length + 1}>
+                      Deferred Developer Fee Payoff ({fmtPct(pf.ddf_payoff_pct)} of CF)
+                    </td>
+                  </tr>
+                  <ProformaRow label="DDF Payment" years={displayYears} getter={y => -y.ddfPayment} deduct />
+                  <ProformaRow label="DDF Balance" years={displayYears} getter={y => y.ddfBalance} bold
+                    cellColor={y => y.ddfBalance <= 0 ? "#1a6b3c" : "#5a3a00"} />
+                </>
+              )}
+
+              {/* ── SUB LOAN PAYOFF ── */}
+              {subLoanRules.length > 0 && (
+                <>
+                  <tr><td style={separatorRow} colSpan={displayYears.length + 1} /></tr>
+                  <tr>
+                    <td style={labelCellSection} colSpan={displayYears.length + 1}>Subordinate Loan Payoff</td>
+                  </tr>
+                  {subLoanRules.map(rule => (
+                    <ProformaRow key={rule.loan_id} label={`${rule.label} Payment`} years={displayYears}
+                      getter={y => -(y.subLoanPayments[rule.loan_id] || 0)} deduct />
+                  ))}
+                </>
+              )}
+
+              {/* ── RESIDUAL CF ── */}
+              <tr><td style={separatorRow} colSpan={displayYears.length + 1} /></tr>
+              <ProformaRow label="Residual Cash Flow" years={displayYears} getter={y => y.residualCF} bold heavy accent="#1a3a6b" signed />
+
+            </tbody>
+          </table>
         </div>
       </div>
+
+      {/* ── DDF PAYOFF SUMMARY ── */}
+      {deferredDevFee > 0 && (
+        <div style={{
+          marginTop: 12, padding: "8px 14px", borderRadius: 4, fontSize: 10,
+          background: result.ddfPaidYear ? "#f0f9f4" : "#fce8e3",
+          border: `1px solid ${result.ddfPaidYear ? "#b8dfc8" : "#f5c2b0"}`,
+          color: result.ddfPaidYear ? "#1a6b3c" : "#8B2500",
+        }}>
+          <strong>DDF Payoff:</strong>{" "}
+          {result.ddfPaidYear
+            ? `Deferred Developer Fee (${fmt$(deferredDevFee)}) fully repaid by Year ${result.ddfPaidYear} from ${fmtPct(pf.ddf_payoff_pct)} of surplus cash flow.`
+            : `Deferred Developer Fee (${fmt$(deferredDevFee)}) NOT fully repaid within 15 years. Remaining balance: ${fmt$(result.years[14]?.ddfBalance || 0)}.`
+          }
+        </div>
+      )}
     </div>
   );
 }
 
-/* ── table styles ────────────────────────────────────────────── */
-const thStyle = { padding: "5px 8px", textAlign: "left", fontSize: 8, color: "#888", textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 };
-const thStyleR = { ...thStyle, textAlign: "right" };
-const tdStyle = { padding: "6px 8px", fontSize: 10 };
-const tdStyleR = { ...tdStyle, textAlign: "right" };
+/* ── Proforma table row component ──────────────────────────── */
+function ProformaRow({ label, years, getter, bold, heavy, border, deduct, accent, signed, cellColor }) {
+  const labelStyle = {
+    padding: bold ? "5px 10px" : "4px 10px 4px 16px",
+    textAlign: "left", fontSize: bold ? 10 : 10, whiteSpace: "nowrap",
+    fontWeight: bold ? 700 : 400,
+    color: accent || (deduct && !bold ? "#888" : bold ? "#111" : "#333"),
+    ...(border ? { borderTop: "1px solid #ddd" } : {}),
+    ...(heavy ? { borderTop: "2px solid #333" } : {}),
+    position: "sticky", left: 0, background: "white", zIndex: 1,
+    paddingLeft: bold ? 10 : 16,
+  };
+
+  return (
+    <tr>
+      <td style={labelStyle}>{label}</td>
+      {years.map(y => {
+        const v = getter(y);
+        const color = cellColor ? cellColor(y) : (accent || (deduct && !bold ? "#888" : bold ? "#111" : "#333"));
+        return (
+          <td key={y.year} style={{
+            padding: bold ? "5px 10px" : "4px 10px",
+            textAlign: "right", fontSize: 10, fontFamily: "Inter, sans-serif",
+            fontWeight: bold ? 700 : 400,
+            color,
+            whiteSpace: "nowrap",
+            ...(border ? { borderTop: "1px solid #ddd" } : {}),
+            ...(heavy ? { borderTop: "2px solid #333" } : {}),
+          }}>
+            {signed || deduct ? fmtNeg$(v) : fmt$(Math.abs(v))}
+          </td>
+        );
+      })}
+    </tr>
+  );
+}
