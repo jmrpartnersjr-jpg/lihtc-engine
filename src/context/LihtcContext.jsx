@@ -230,8 +230,10 @@ const DEFAULT_MODULE_STATES = {
     wshfc_fee_rate: 0.00175,
   },
 
-  schedule: null,   // persisted by Schedule.jsx
-  lease_up: null,   // persisted by LeaseUp.jsx
+  schedule: null,      // persisted by Schedule.jsx
+  lease_up: null,      // persisted by LeaseUp.jsx
+  disposition: null,   // persisted by Disposition.jsx
+  sponsor_cf: null,    // persisted by SponsorCF.jsx
 }
 
 // ─────────────────────────────────────────────────────────────
