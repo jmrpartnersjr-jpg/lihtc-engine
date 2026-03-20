@@ -219,9 +219,13 @@ function computeDebt(construction, permanent, subdebt, lihtcCalcs, budgetCalcs, 
   const combinedTarget = _tdc * (construction.ltc_pct || 0.82);
   const teTarget       = _tdc * (construction.bond_test_target_pct || 0.35);
   const taxTarget      = Math.max(0, combinedTarget - teTarget);
-  // Use derived values; fall back to stored amounts if TDC not available
-  const teLoan         = _tdc > 0 ? teTarget       : (construction.te_loan_amount || 0);
-  const taxLoan        = _tdc > 0 ? taxTarget       : (construction.taxable_loan_amount || 0);
+  // Use manual overrides if set; else derived from LTC/Bond Test; else stored amounts
+  const teLoan         = construction.te_loan_override != null
+    ? construction.te_loan_override
+    : (_tdc > 0 ? teTarget : (construction.te_loan_amount || 0));
+  const taxLoan        = construction.taxable_loan_override != null
+    ? construction.taxable_loan_override
+    : (_tdc > 0 ? taxTarget : (construction.taxable_loan_amount || 0));
   const combinedConstLoan = teLoan + taxLoan;
   const constOrigination  = combinedConstLoan * (construction.origination_pct || 0);
 
@@ -947,15 +951,55 @@ export default function DebtPanel() {
                   onChange={v => updateConstruction({ bond_test_target_pct: v })} />
               </FieldRow>
               <div style={{ borderTop:"1px solid #e0e0e0", marginTop:8, paddingTop:8 }}>
-                <div style={{ display:"flex", justifyContent:"space-between", marginBottom:4 }}>
-                  <span style={{ fontSize:9, color:"#666" }}>TE Bond Amount</span>
-                  <span style={{ fontSize:11, fontWeight:700, color:"#1a3a6b" }}>{fmt$(calcs.teLoan)}</span>
+                {/* TE Bond Amount — manual override or auto */}
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:6 }}>
+                  <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+                    <span style={{ fontSize:9, color:"#666" }}>TE Bond Amount</span>
+                    {construction.te_loan_override != null && (
+                      <button onClick={() => updateConstruction({ te_loan_override: null })}
+                        style={{ background:"#1a3a6b22", border:"none", borderRadius:3, padding:"1px 5px",
+                          fontSize:7, color:"#1a3a6b", cursor:"pointer", fontWeight:700, letterSpacing:"0.04em" }}
+                        title="Click to revert to auto-calculated value">
+                        MANUAL — RESET
+                      </button>
+                    )}
+                    {construction.te_loan_override == null && (
+                      <span style={{ fontSize:7, color:"#aaa", letterSpacing:"0.04em" }}>AUTO</span>
+                    )}
+                  </div>
+                  <NumInput
+                    value={calcs.teLoan}
+                    step={100000}
+                    prefix="$"
+                    width={130}
+                    onChange={v => updateConstruction({ te_loan_override: v })}
+                  />
                 </div>
-                <div style={{ display:"flex", justifyContent:"space-between", marginBottom:4 }}>
-                  <span style={{ fontSize:9, color:"#666" }}>Taxable Tail</span>
-                  <span style={{ fontSize:11, fontWeight:600, color:"#666" }}>{fmt$(calcs.taxLoan)}</span>
+                {/* Taxable Construction Loan — manual override or auto */}
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:6 }}>
+                  <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+                    <span style={{ fontSize:9, color:"#666" }}>Taxable Construction Loan</span>
+                    {construction.taxable_loan_override != null && (
+                      <button onClick={() => updateConstruction({ taxable_loan_override: null })}
+                        style={{ background:"#5a3a0022", border:"none", borderRadius:3, padding:"1px 5px",
+                          fontSize:7, color:"#5a3a00", cursor:"pointer", fontWeight:700, letterSpacing:"0.04em" }}
+                        title="Click to revert to auto-calculated value">
+                        MANUAL — RESET
+                      </button>
+                    )}
+                    {construction.taxable_loan_override == null && (
+                      <span style={{ fontSize:7, color:"#aaa", letterSpacing:"0.04em" }}>AUTO</span>
+                    )}
+                  </div>
+                  <NumInput
+                    value={calcs.taxLoan}
+                    step={100000}
+                    prefix="$"
+                    width={130}
+                    onChange={v => updateConstruction({ taxable_loan_override: v })}
+                  />
                 </div>
-                <div style={{ display:"flex", justifyContent:"space-between" }}>
+                <div style={{ display:"flex", justifyContent:"space-between", borderTop:"1px solid #e0e0e0", paddingTop:6 }}>
                   <span style={{ fontSize:9, color:"#888", fontWeight:700 }}>Combined Construction Loan</span>
                   <span style={{ fontSize:12, fontWeight:700, color:"#8B2500" }}>{fmt$(calcs.combinedConstLoan)}</span>
                 </div>
