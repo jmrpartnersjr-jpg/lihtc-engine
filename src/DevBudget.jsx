@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useRef, useMemo } from "react";
 import { useLihtc } from "./context/LihtcContext.jsx";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -271,9 +271,7 @@ function AssumptionsBar({ assumptions, onUpdate }) {
     { key:"rep_reserve_per_unit", label:"Rep. Res. $/Unit",   pct:false },
     { key:"op_reserve_months",    label:"Op. Res. Months",    pct:false },
     { key:"ads_reserve_months",   label:"ADS Res. Months",    pct:false },
-    { key:"const_loan_amount",    label:"TE Loan (temp)",      pct:false },
-    { key:"taxable_loan_amount",  label:"Taxable Loan (temp)",  pct:false },
-    { key:"perm_loan_amount",     label:"Perm Loan (temp)",   pct:false },
+    // Loan amounts now wired from Debt module — no longer editable here
   ]
 
   return (
@@ -308,7 +306,7 @@ function AssumptionsBar({ assumptions, onUpdate }) {
         </div>
       </div>
       <div style={{ fontSize:8, color:"#aaa", marginTop:6 }}>
-        Construction and lease-up interest are estimates — Module 2B (Construction Cash Flow) will calculate actuals. Loan amounts marked "(temp)" will be replaced by live values once Module 4 (Debt) is wired.
+        Construction and lease-up interest are estimates — Module 2B (Construction Cash Flow) will calculate actuals. Loan amounts auto-wired from Debt Stack (Module 4).
       </div>
     </div>
   );
@@ -533,8 +531,41 @@ export default function DevBudgetPanel({ onBudgetUpdate }) {
   const noi = moduleStates.unit_mix ? null : null; // will wire when proforma exists
   const ads = null;
 
-  // Compute everything
-  const calcs = computeBudget(sections, assumptions, totalUnits, noi, ads);
+  // ─── Wire loan amounts from Debt module (live) ─────────────────────────────
+  // The Debt module computes TE loan, taxable loan, and perm loan amounts.
+  // We read its state directly so DevBudget origination fees stay in sync.
+  const debt = moduleStates.debt;
+  const effectiveAssumptions = useMemo(() => {
+    if (!debt) return assumptions;
+    const c = debt.construction || {};
+    const p = debt.permanent || {};
+    const patch = {};
+    // Construction loans: if Debt module has overrides, use those;
+    // otherwise the Debt module computes them from LTC% × TDC, but we can't
+    // use TDC here (circular). Instead, use the Debt module's stored percentages
+    // applied to current budget assumptions' loan amounts as a first pass,
+    // then the Debt tab's own computeDebt will use the real TDC.
+    // For manual overrides this is straightforward:
+    if (c.te_loan_override != null) patch.const_loan_amount = c.te_loan_override;
+    if (c.taxable_loan_override != null) patch.taxable_loan_amount = c.taxable_loan_override;
+    // For auto mode, use ltc_pct and bond_test_target_pct with the budget's own
+    // pre-calc TDC. We do a quick pre-calc with current assumptions.
+    if (c.te_loan_override == null || c.taxable_loan_override == null) {
+      const preCalcs = computeBudget(sections, assumptions, totalUnits, noi, ads);
+      const tdc = preCalcs.tdc || 0;
+      const combinedTarget = tdc * (c.ltc_pct ?? 0.82);
+      const teTarget = tdc * (c.bond_test_target_pct ?? 0.35);
+      const taxTarget = Math.max(0, combinedTarget - teTarget);
+      if (c.te_loan_override == null && tdc > 0) patch.const_loan_amount = teTarget;
+      if (c.taxable_loan_override == null && tdc > 0) patch.taxable_loan_amount = taxTarget;
+    }
+    if (p.loan_amount != null) patch.perm_loan_amount = p.loan_amount;
+    if (Object.keys(patch).length === 0) return assumptions;
+    return { ...assumptions, ...patch };
+  }, [debt, assumptions, sections, totalUnits, noi, ads]);
+
+  // Compute everything with debt-wired assumptions
+  const calcs = computeBudget(sections, effectiveAssumptions, totalUnits, noi, ads);
 
   // Writers
   const updateAssumptions = useCallback((patch) => {

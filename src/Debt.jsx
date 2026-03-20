@@ -328,6 +328,43 @@ function NumInput({ value, onChange, step, min, pct, prefix, width = 110, disabl
   );
 }
 
+// Dollar input with comma formatting — shows "$1,234,567" when not focused,
+// raw number when editing. Rounds to whole dollars.
+function DollarInput({ value, onChange, width = 130 }) {
+  const [editing, setEditing] = useState(false);
+  const [raw, setRaw] = useState("");
+  const inputRef = useRef(null);
+  const rounded = Math.round(value || 0);
+  return (
+    <div style={{ position:"relative", width }}>
+      {!editing && (
+        <div
+          onClick={() => { setEditing(true); setRaw(String(rounded)); setTimeout(() => inputRef.current?.select(), 10); }}
+          style={{ background:"#f8f8f8", border:"1px solid #e0e0e0", borderRadius:4,
+            padding:"4px 8px", fontSize:11, fontFamily:"Inter, sans-serif",
+            color:"#111", textAlign:"right", cursor:"text", width:"100%", boxSizing:"border-box" }}>
+          {fmt$(rounded)}
+        </div>
+      )}
+      {editing && (
+        <input
+          ref={inputRef}
+          type="number"
+          value={raw}
+          autoFocus
+          step={100000}
+          onChange={e => setRaw(e.target.value)}
+          onBlur={() => { setEditing(false); const v = Number(raw); if (!isNaN(v)) onChange(Math.round(v)); }}
+          onKeyDown={e => { if (e.key === "Enter") e.target.blur(); }}
+          style={{ background:"#f8f8f8", border:"1px solid #1a3a6b", borderRadius:4,
+            padding:"4px 8px", fontSize:11, fontFamily:"Inter, sans-serif",
+            color:"#111", outline:"none", width:"100%", textAlign:"right", boxSizing:"border-box" }}
+        />
+      )}
+    </div>
+  );
+}
+
 function TextInput({ value, onChange, placeholder, width = "100%" }) {
   return (
     <input
@@ -967,10 +1004,8 @@ export default function DebtPanel() {
                       <span style={{ fontSize:7, color:"#aaa", letterSpacing:"0.04em" }}>AUTO</span>
                     )}
                   </div>
-                  <NumInput
+                  <DollarInput
                     value={calcs.teLoan}
-                    step={100000}
-                    prefix="$"
                     width={130}
                     onChange={v => updateConstruction({ te_loan_override: v })}
                   />
@@ -991,10 +1026,8 @@ export default function DebtPanel() {
                       <span style={{ fontSize:7, color:"#aaa", letterSpacing:"0.04em" }}>AUTO</span>
                     )}
                   </div>
-                  <NumInput
+                  <DollarInput
                     value={calcs.taxLoan}
-                    step={100000}
-                    prefix="$"
                     width={130}
                     onChange={v => updateConstruction({ taxable_loan_override: v })}
                   />
