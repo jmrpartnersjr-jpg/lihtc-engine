@@ -13,6 +13,7 @@ import LeaseUpPanel from "./LeaseUp.jsx";
 import GapSolverPanel from "./GapSolver.jsx";
 import DispositionPanel from "./Disposition.jsx";
 import SponsorCFPanel from "./SponsorCF.jsx";
+import DashboardPanel from "./Dashboard.jsx";
 
 // ─── CHANGE 1 of 4: Import context hooks and new components ──────────────────
 import { useLihtc } from "./context/LihtcContext.jsx";
@@ -561,7 +562,7 @@ const defaultScenarios = fa => [
 export default function App() {
   const [activeId,    setActiveId]    = useState(PROJECTS_DATA[0].id);
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [tab,         setTab]         = useState("unitmix");
+  const [tab,         setTab]         = useState("dashboard");
   const [scenarios,   setScenarios]   = useState(()=>defaultScenarios(PROJECTS_DATA[0].financial_assumptions));
   const [unitMixRev,  setUnitMixRev]  = useState(null);
   const [debtOverride, setDebtOverride] = useState(null);
@@ -674,6 +675,7 @@ export default function App() {
   const dupSc       = id=>{ const src=scenarios.find(s=>s.id===id); setScenarios(s=>[...s,{...src,id:mkId(),name:src.name+" (copy)"}]); };
 
   const TABS = [
+    {key:"dashboard", label:"Summary"},
     {key:"unitmix",   label:"Unit Mix"},
     {key:"debt",      label:"Debt"},
     {key:"devbudget", label:"Dev Budget"},
@@ -781,6 +783,9 @@ export default function App() {
             </div>
           )}
 
+          {tab==="dashboard" && (
+            <DashboardPanel />
+          )}
           {tab==="unitmix" && (
             <UnitMixPanel onRevenueChange={rev => { setUnitMixRev(rev); setTab("unitmix"); }} />
           )}
